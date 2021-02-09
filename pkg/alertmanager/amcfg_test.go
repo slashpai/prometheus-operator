@@ -87,23 +87,6 @@ templates: []
 `,
 		},
 		{
-			name:    "skeleton base, empty CR",
-			kclient: fake.NewSimpleClientset(),
-			baseConfig: alertmanagerConfig{
-				Route:     &route{Receiver: "null"},
-				Receivers: []*receiver{{Name: "null"}},
-			},
-			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{
-				"mynamespace": {},
-			},
-			expected: `route:
-  receiver: "null"
-receivers:
-- name: "null"
-templates: []
-`,
-		},
-		{
 			name:    "skeleton base, simple CR",
 			kclient: fake.NewSimpleClientset(),
 			baseConfig: alertmanagerConfig{
@@ -134,6 +117,56 @@ templates: []
 receivers:
 - name: "null"
 - name: mynamespace-myamc-test
+templates: []
+`,
+		},
+		{
+			name:    "skeleton base, CR with inhibition rules only",
+			kclient: fake.NewSimpleClientset(),
+			baseConfig: alertmanagerConfig{
+				Route:     &route{Receiver: "null"},
+				Receivers: []*receiver{{Name: "null"}},
+			},
+			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{
+				"mynamespace": {
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "myamc",
+						Namespace: "mynamespace",
+					},
+					Spec: monitoringv1alpha1.AlertmanagerConfigSpec{
+						InhibitRules: []monitoringv1alpha1.InhibitRule{
+							{
+								SourceMatch: []monitoringv1alpha1.Matcher{
+									{
+										Name:  "alertname",
+										Value: "NodeNotReady",
+									},
+								},
+								TargetMatch: []monitoringv1alpha1.Matcher{
+									{
+										Name:  "alertname",
+										Value: "TargetDown",
+									},
+								},
+								Equal: []string{"node"},
+							},
+						},
+					},
+				},
+			},
+			expected: `route:
+  receiver: "null"
+inhibit_rules:
+- target_match:
+    alertname: TargetDown
+    namespace: mynamespace
+  source_match:
+    alertname: NodeNotReady
+    namespace: mynamespace
+  equal:
+  - node
+receivers:
+- name: "null"
 templates: []
 `,
 		},
@@ -439,7 +472,7 @@ templates: []
 									},
 									Key: "apiSecret",
 								},
-								CorpID: strPtr("wechatcorpid"),
+								CorpID: "wechatcorpid",
 							}},
 						}},
 					},
