@@ -838,17 +838,13 @@ func testAlertmanagerConfigCRD(t *testing.T) {
 						},
 						Key: testingSecretKey,
 					},
-					CorpID: func(str string) *string {
-						return &str
-					}("testingCorpID"),
+					CorpID: "testingCorpID",
 				}},
 				EmailConfigs: []monitoringv1alpha1.EmailConfig{{
 					SendResolved: func(b bool) *bool {
 						return &b
 					}(true),
-					To: func(str string) *string {
-						return &str
-					}("test@example.com"),
+					To: "test@example.com",
 					AuthPassword: &v1.SecretKeySelector{
 						LocalObjectReference: v1.LocalObjectReference{
 							Name: testingSecret,
@@ -869,9 +865,7 @@ func testAlertmanagerConfigCRD(t *testing.T) {
 						},
 						Key: testingSecretKey,
 					},
-					RoutingKey: func(str string) *string {
-						return &str
-					}("abc"),
+					RoutingKey: "abc",
 				}},
 				PushoverConfigs: []monitoringv1alpha1.PushoverConfig{{
 					UserKey: &v1.SecretKeySelector{

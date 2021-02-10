@@ -111,10 +111,6 @@ func New(ctx context.Context, conf operator.Config, logger log.Logger, r prometh
 		return nil, errors.Wrap(err, "can not parse prometheus selector value")
 	}
 
-	if _, err := labels.Parse(conf.AlertManagerSelector); err != nil {
-		return nil, errors.Wrap(err, "can not parse alertmanager selector value")
-	}
-
 	secretListWatchSelector, err := fields.ParseSelector(conf.SecretListWatchSelector)
 	if err != nil {
 		return nil, errors.Wrap(err, "can not parse secrets selector value")
@@ -582,7 +578,8 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: c.kubeletObjectName,
 			Labels: c.config.Labels.Merge(map[string]string{
-				"k8s-app": "kubelet",
+				"k8s-app":                "kubelet",
+				"app.kubernetes.io/name": "kubelet",
 			}),
 		},
 		Subsets: []v1.EndpointSubset{
@@ -610,7 +607,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		return errors.Wrap(err, "listing nodes failed")
 	}
 
-	level.Debug(logger).Log("Nodes retrieved from the Kubernetes API", "num_nodes", len(nodes.Items))
+	level.Debug(logger).Log("msg", "Nodes retrieved from the Kubernetes API", "num_nodes", len(nodes.Items))
 
 	addresses, errs := getNodeAddresses(nodes)
 	if len(errs) > 0 {
@@ -619,7 +616,7 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		}
 		c.nodeAddressLookupErrors.Add(float64(len(errs)))
 	}
-	level.Debug(logger).Log("Nodes converted to endpoint addresses", "num_addresses", len(addresses))
+	level.Debug(logger).Log("msg", "Nodes converted to endpoint addresses", "num_addresses", len(addresses))
 
 	eps.Subsets[0].Addresses = addresses
 
@@ -627,7 +624,8 @@ func (c *Operator) syncNodeEndpoints(ctx context.Context) error {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: c.kubeletObjectName,
 			Labels: c.config.Labels.Merge(map[string]string{
-				"k8s-app": "kubelet",
+				"k8s-app":                "kubelet",
+				"app.kubernetes.io/name": "kubelet",
 			}),
 		},
 		Spec: v1.ServiceSpec{

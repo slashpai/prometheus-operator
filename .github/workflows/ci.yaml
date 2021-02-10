@@ -4,8 +4,8 @@ on:
   - pull_request
 env:
   golang-version: '1.15'
-  kind-version: 'v0.8.1'
-  kind-image: 'kindest/node:v1.18.8'  # Image defines which k8s version is used
+  kind-version: 'v0.9.0'
+  kind-image: 'kindest/node:v1.20.0'  # Image defines which k8s version is used
 jobs:
   generate:
     runs-on: ${{ matrix.os }}
@@ -130,7 +130,7 @@ jobs:
         make build image
         kind load docker-image quay.io/prometheus-operator/prometheus-operator:$(git rev-parse --short HEAD)
         kind load docker-image quay.io/prometheus-operator/prometheus-config-reloader:$(git rev-parse --short HEAD)
-        kubectl apply -f scripts/minikube-rbac.yaml
+        kubectl apply -f scripts/kind-rbac.yaml
     - name: Run tests
       run: >
         EXCLUDE_ALERTMANAGER_TESTS=${{ matrix.alertmanager }}
@@ -151,6 +151,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+      - name: Install Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ env.golang-version }}
       - name: Login to Quay.io
         uses: docker/login-action@v1
         with:

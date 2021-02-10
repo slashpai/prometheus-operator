@@ -66,6 +66,34 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 		{
 			amConfig: &monitoringv1alpha1.AlertmanagerConfig{
 				ObjectMeta: metav1.ObjectMeta{
+					Name:      "inhibitRulesOnly",
+					Namespace: "ns1",
+				},
+				Spec: monitoringv1alpha1.AlertmanagerConfigSpec{
+					InhibitRules: []monitoringv1alpha1.InhibitRule{
+						{
+							SourceMatch: []monitoringv1alpha1.Matcher{
+								{
+									Name:  "alertname",
+									Value: "NodeNotReady",
+								},
+							},
+							TargetMatch: []monitoringv1alpha1.Matcher{
+								{
+									Name:  "alertname",
+									Value: "TargetDown",
+								},
+							},
+							Equal: []string{"node"},
+						},
+					},
+				},
+			},
+			ok: true,
+		},
+		{
+			amConfig: &monitoringv1alpha1.AlertmanagerConfig{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "missing-receiver",
 					Namespace: "ns1",
 				},
@@ -316,7 +344,7 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 						Name: "recv1",
 						WeChatConfigs: []monitoringv1alpha1.WeChatConfig{
 							{
-								CorpID: strPtr("testingCorpID"),
+								CorpID: "testingCorpID",
 							},
 						},
 					}},
@@ -338,8 +366,8 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 						Name: "recv1",
 						WeChatConfigs: []monitoringv1alpha1.WeChatConfig{
 							{
-								CorpID: strPtr("testingCorpID"),
-								APIURL: strPtr("http://::invalid-url"),
+								CorpID: "testingCorpID",
+								APIURL: "http://::invalid-url",
 							},
 						},
 					}},
@@ -361,7 +389,7 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 						Name: "recv1",
 						WeChatConfigs: []monitoringv1alpha1.WeChatConfig{
 							{
-								CorpID: strPtr("testingCorpID"),
+								CorpID: "testingCorpID",
 								APISecret: &v1.SecretKeySelector{
 									LocalObjectReference: v1.LocalObjectReference{Name: "secret"},
 									Key:                  "not-existing",
@@ -387,7 +415,7 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 						Name: "recv1",
 						WeChatConfigs: []monitoringv1alpha1.WeChatConfig{
 							{
-								CorpID: strPtr("testingCorpID"),
+								CorpID: "testingCorpID",
 								APISecret: &v1.SecretKeySelector{
 									LocalObjectReference: v1.LocalObjectReference{Name: "secret"},
 									Key:                  "key1",
