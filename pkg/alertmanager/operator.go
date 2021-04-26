@@ -161,6 +161,12 @@ func (c *Operator) bootstrap(ctx context.Context) error {
 		return errors.Wrap(err, "error creating alertmanager informers")
 	}
 
+	var alertmanagerStores []cache.Store
+	for _, informer := range c.alrtInfs.GetInformers() {
+		alertmanagerStores = append(alertmanagerStores, informer.Informer().GetStore())
+	}
+	c.metrics.MustRegister(newAlertmanagerCollectorForStores(alertmanagerStores...))
+
 	c.alrtCfgInfs, err = informers.NewInformersForResource(
 		informers.NewMonitoringInformerFactories(
 			c.config.Namespaces.AllowList,
@@ -598,6 +604,10 @@ func (c *Operator) handleAlertmanagerDelete(obj interface{}) {
 }
 
 func (c *Operator) handleAlertmanagerUpdate(old, cur interface{}) {
+	if old.(*monitoringv1.Alertmanager).ResourceVersion == cur.(*monitoringv1.Alertmanager).ResourceVersion {
+		return
+	}
+
 	key, ok := c.keyFunc(cur)
 	if !ok {
 		return
@@ -704,7 +714,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 	}
 
 	operator.SanitizeSTS(sset)
-	_, err = ssetClient.Update(ctx, sset, metav1.UpdateOptions{})
+	err = k8sutil.UpdateStatefulSet(ctx, ssetClient, sset)
 	sErr, ok := err.(*apierrors.StatusError)
 
 	if ok && sErr.ErrStatus.Code == 422 && sErr.ErrStatus.Reason == metav1.StatusReasonInvalid {
@@ -837,7 +847,7 @@ func (c *Operator) createOrUpdateGeneratedConfigSecret(ctx context.Context, am *
 		_, err = sClient.Create(ctx, generatedConfigSecret, metav1.CreateOptions{})
 		level.Debug(c.logger).Log("msg", "created generated config secret", "secretname", generatedConfigSecret.Name)
 	} else {
-		_, err = sClient.Update(ctx, generatedConfigSecret, metav1.UpdateOptions{})
+		err = k8sutil.UpdateSecret(ctx, sClient, generatedConfigSecret)
 		level.Debug(c.logger).Log("msg", "updated generated config secret", "secretname", generatedConfigSecret.Name)
 	}
 
@@ -881,12 +891,15 @@ func (c *Operator) selectAlertmanagerConfigs(ctx context.Context, am *monitoring
 	}
 
 	for _, ns := range namespaces {
-		c.alrtCfgInfs.ListAllByNamespace(ns, amConfigSelector, func(obj interface{}) {
+		err := c.alrtCfgInfs.ListAllByNamespace(ns, amConfigSelector, func(obj interface{}) {
 			k, ok := c.keyFunc(obj)
 			if ok {
 				amConfigs[k] = obj.(*monitoringv1alpha1.AlertmanagerConfig)
 			}
 		})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to list alertmanager configs in namespace %s", ns)
+		}
 	}
 
 	var rejected int
@@ -929,7 +942,7 @@ func checkAlertmanagerConfig(ctx context.Context, amc *monitoringv1alpha1.Alertm
 		return err
 	}
 
-	return checkAlertmanagerRoutes(amc.Spec.Route, receiverNames)
+	return checkAlertmanagerRoutes(amc.Spec.Route, receiverNames, true)
 }
 
 func checkReceivers(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerConfig, store *assets.Store) (map[string]struct{}, error) {
@@ -1235,12 +1248,12 @@ func checkPushoverConfigs(ctx context.Context, configs []monitoringv1alpha1.Push
 }
 
 // checkAlertmanagerRoutes verifies that the given route and all its children are semantically valid.
-func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]struct{}) error {
+func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]struct{}, topLevelRoute bool) error {
 	if r == nil {
 		return nil
 	}
 
-	if _, found := receivers[r.Receiver]; !found {
+	if _, found := receivers[r.Receiver]; !found && (r.Receiver != "" || topLevelRoute) {
 		return errors.Errorf("receiver %q not found", r.Receiver)
 	}
 
@@ -1250,7 +1263,7 @@ func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]s
 	}
 
 	for i := range children {
-		if err := checkAlertmanagerRoutes(&children[i], receivers); err != nil {
+		if err := checkAlertmanagerRoutes(&children[i], receivers, false); err != nil {
 			return errors.Wrapf(err, "route[%d]", i)
 		}
 	}
@@ -1321,7 +1334,7 @@ func (c *Operator) createOrUpdateTLSAssetSecret(ctx context.Context, am *monitor
 		level.Debug(c.logger).Log("msg", "created tlsAssetsSecret", "secretname", tlsAssetsSecret.Name)
 
 	} else {
-		_, err = sClient.Update(ctx, tlsAssetsSecret, metav1.UpdateOptions{})
+		err = k8sutil.UpdateSecret(ctx, sClient, tlsAssetsSecret)
 		level.Debug(c.logger).Log("msg", "updated tlsAssetsSecret", "secretname", tlsAssetsSecret.Name)
 	}
 
@@ -1355,7 +1368,7 @@ func ListOptions(name string) metav1.ListOptions {
 	}
 }
 
-func AlertmanagerStatus(ctx context.Context, kclient kubernetes.Interface, a *monitoringv1.Alertmanager) (*monitoringv1.AlertmanagerStatus, []v1.Pod, error) {
+func Status(ctx context.Context, kclient kubernetes.Interface, a *monitoringv1.Alertmanager) (*monitoringv1.AlertmanagerStatus, []v1.Pod, error) {
 	res := &monitoringv1.AlertmanagerStatus{Paused: a.Spec.Paused}
 
 	pods, err := kclient.CoreV1().Pods(a.Namespace).List(ctx, ListOptions(a.Name))
