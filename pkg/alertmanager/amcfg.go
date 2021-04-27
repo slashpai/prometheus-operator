@@ -43,6 +43,9 @@ func loadCfg(s string) (*alertmanagerConfig, error) {
 
 	cfg := &alertmanagerConfig{}
 	err = yaml.UnmarshalStrict([]byte(s), cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	return cfg, nil
 }
@@ -593,7 +596,7 @@ func (cg *configGenerator) convertEmailConfig(ctx context.Context, in monitoring
 
 		var key string
 		for _, d := range in.Headers {
-			key = strings.Title(key)
+			key = strings.Title(d.Key)
 			if _, ok := headers[key]; ok {
 				return nil, errors.Errorf("duplicate header %q in email config", key)
 			}
