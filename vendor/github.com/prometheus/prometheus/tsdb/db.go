@@ -56,8 +56,6 @@ const (
 	// about removing those too on start to save space. Currently only blocks tmp dirs are removed.
 	tmpForDeletionBlockDirSuffix = ".tmp-for-deletion"
 	tmpForCreationBlockDirSuffix = ".tmp-for-creation"
-	// Pre-2.21 tmp dir suffix, used in clean-up functions.
-	tmpLegacy = ".tmp"
 )
 
 var (
@@ -334,9 +332,7 @@ func (db *DBReadOnly) FlushWAL(dir string) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	opts := DefaultHeadOptions()
-	opts.ChunkDirRoot = db.dir
-	head, err := NewHead(nil, db.logger, w, opts)
+	head, err := NewHead(nil, db.logger, w, DefaultBlockDuration, db.dir, nil, chunks.DefaultWriteBufferSize, DefaultStripeSize, nil)
 	if err != nil {
 		return err
 	}
@@ -389,9 +385,7 @@ func (db *DBReadOnly) loadDataAsQueryable(maxt int64) (storage.SampleAndChunkQue
 		blocks[i] = b
 	}
 
-	opts := DefaultHeadOptions()
-	opts.ChunkDirRoot = db.dir
-	head, err := NewHead(nil, db.logger, nil, opts)
+	head, err := NewHead(nil, db.logger, nil, DefaultBlockDuration, db.dir, nil, chunks.DefaultWriteBufferSize, DefaultStripeSize, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -409,9 +403,7 @@ func (db *DBReadOnly) loadDataAsQueryable(maxt int64) (storage.SampleAndChunkQue
 		if err != nil {
 			return nil, err
 		}
-		opts := DefaultHeadOptions()
-		opts.ChunkDirRoot = db.dir
-		head, err = NewHead(nil, db.logger, w, opts)
+		head, err = NewHead(nil, db.logger, w, DefaultBlockDuration, db.dir, nil, chunks.DefaultWriteBufferSize, DefaultStripeSize, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -656,14 +648,7 @@ func open(dir string, l log.Logger, r prometheus.Registerer, opts *Options, rngs
 		}
 	}
 
-	headOpts := DefaultHeadOptions()
-	headOpts.ChunkRange = rngs[0]
-	headOpts.ChunkDirRoot = dir
-	headOpts.ChunkPool = db.chunkPool
-	headOpts.ChunkWriteBufferSize = opts.HeadChunksWriteBufferSize
-	headOpts.StripeSize = opts.StripeSize
-	headOpts.SeriesCallback = opts.SeriesLifecycleCallback
-	db.head, err = NewHead(r, l, wlog, headOpts)
+	db.head, err = NewHead(r, l, wlog, rngs[0], dir, db.chunkPool, opts.HeadChunksWriteBufferSize, opts.StripeSize, opts.SeriesLifecycleCallback)
 	if err != nil {
 		return nil, err
 	}
@@ -747,12 +732,6 @@ func (db *DB) run() {
 
 		select {
 		case <-time.After(1 * time.Minute):
-			db.cmtx.Lock()
-			if err := db.reloadBlocks(); err != nil {
-				level.Error(db.logger).Log("msg", "reloadBlocks", "err", err)
-			}
-			db.cmtx.Unlock()
-
 			select {
 			case db.compactc <- struct{}{}:
 			default:
@@ -1585,7 +1564,7 @@ func isTmpBlockDir(fi os.FileInfo) bool {
 
 	fn := fi.Name()
 	ext := filepath.Ext(fn)
-	if ext == tmpForDeletionBlockDirSuffix || ext == tmpForCreationBlockDirSuffix || ext == tmpLegacy {
+	if ext == tmpForDeletionBlockDirSuffix || ext == tmpForCreationBlockDirSuffix {
 		if _, err := ulid.ParseStrict(fn[:len(fn)-len(ext)]); err == nil {
 			return true
 		}

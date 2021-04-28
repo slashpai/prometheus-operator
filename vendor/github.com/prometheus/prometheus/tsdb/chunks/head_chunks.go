@@ -70,7 +70,7 @@ const (
 	DefaultWriteBufferSize = 4 * 1024 * 1024 // 4 MiB.
 )
 
-// CorruptionErr is an error that's returned when corruption is encountered.
+// corruptionErr is an error that's returned when corruption is encountered.
 type CorruptionErr struct {
 	Dir       string
 	FileIndex int
