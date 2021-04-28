@@ -59,6 +59,7 @@ func funcTime(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper)
 func extrapolatedRate(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper, isCounter bool, isRate bool) Vector {
 	ms := args[0].(*parser.MatrixSelector)
 	vs := ms.VectorSelector.(*parser.VectorSelector)
+
 	var (
 		samples    = vals[0].(Matrix)[0]
 		rangeStart = enh.Ts - durationMilliseconds(ms.Range+vs.Offset)
@@ -597,6 +598,7 @@ func funcDeriv(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper
 func funcPredictLinear(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	samples := vals[0].(Matrix)[0]
 	duration := vals[1].(Vector)[0].V
+
 	// No sense in trying to predict anything without at least two points.
 	// Drop this Vector element.
 	if len(samples.Points) < 2 {
@@ -699,10 +701,10 @@ func funcChanges(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelp
 func funcLabelReplace(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	var (
 		vector   = vals[0].(Vector)
-		dst      = stringFromArg(args[1])
-		repl     = stringFromArg(args[2])
-		src      = stringFromArg(args[3])
-		regexStr = stringFromArg(args[4])
+		dst      = args[1].(*parser.StringLiteral).Val
+		repl     = args[2].(*parser.StringLiteral).Val
+		src      = args[3].(*parser.StringLiteral).Val
+		regexStr = args[4].(*parser.StringLiteral).Val
 	)
 
 	if enh.regex == nil {
@@ -762,8 +764,8 @@ func funcVector(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelpe
 func funcLabelJoin(vals []parser.Value, args parser.Expressions, enh *EvalNodeHelper) Vector {
 	var (
 		vector    = vals[0].(Vector)
-		dst       = stringFromArg(args[1])
-		sep       = stringFromArg(args[2])
+		dst       = args[1].(*parser.StringLiteral).Val
+		sep       = args[2].(*parser.StringLiteral).Val
 		srcLabels = make([]string, len(args)-3)
 	)
 
@@ -772,7 +774,7 @@ func funcLabelJoin(vals []parser.Value, args parser.Expressions, enh *EvalNodeHe
 	}
 
 	for i := 3; i < len(args); i++ {
-		src := stringFromArg(args[i])
+		src := args[i].(*parser.StringLiteral).Val
 		if !model.LabelName(src).IsValid() {
 			panic(errors.Errorf("invalid source label name in label_join(): %s", src))
 		}
@@ -936,21 +938,6 @@ var FunctionCalls = map[string]FunctionCall{
 	"year":               funcYear,
 }
 
-// AtModifierUnsafeFunctions are the functions whose result
-// can vary if evaluation time is changed when the arguments are
-// step invariant. It also includes functions that use the timestamps
-// of the passed instant vector argument to calculate a result since
-// that can also change with change in eval time.
-var AtModifierUnsafeFunctions = map[string]struct{}{
-	// Step invariant functions.
-	"days_in_month": {}, "day_of_month": {}, "day_of_week": {},
-	"hour": {}, "minute": {}, "month": {}, "year": {},
-	"predict_linear": {}, "time": {},
-	// Uses timestamp of the argument for the result,
-	// hence unsafe to use with @ modifier.
-	"timestamp": {},
-}
-
 type vectorByValueHeap Vector
 
 func (s vectorByValueHeap) Len() int {
@@ -1040,8 +1027,4 @@ func createLabelsForAbsentFunction(expr parser.Expr) labels.Labels {
 		m = labels.NewBuilder(m).Del(v).Labels()
 	}
 	return m
-}
-
-func stringFromArg(e parser.Expr) string {
-	return unwrapStepInvariantExpr(e).(*parser.StringLiteral).Val
 }

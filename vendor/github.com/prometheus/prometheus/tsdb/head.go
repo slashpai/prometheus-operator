@@ -61,7 +61,6 @@ type Head struct {
 	lastSeriesID          atomic.Uint64
 
 	metrics      *headMetrics
-	opts         *HeadOptions
 	wal          *wal.WAL
 	logger       log.Logger
 	appendPool   sync.Pool
@@ -70,7 +69,8 @@ type Head struct {
 	memChunkPool sync.Pool
 
 	// All series addressable by their ID or hash.
-	series *stripeSeries
+	series         *stripeSeries
+	seriesCallback SeriesLifecycleCallback
 
 	symMtx  sync.RWMutex
 	symbols map[string]struct{}
@@ -90,34 +90,11 @@ type Head struct {
 
 	// chunkDiskMapper is used to write and read Head chunks to/from disk.
 	chunkDiskMapper *chunks.ChunkDiskMapper
+	// chunkDirRoot is the parent directory of the chunks directory.
+	chunkDirRoot string
 
 	closedMtx sync.Mutex
 	closed    bool
-}
-
-// HeadOptions are parameters for the Head block.
-type HeadOptions struct {
-	ChunkRange int64
-	// ChunkDirRoot is the parent directory of the chunks directory.
-	ChunkDirRoot         string
-	ChunkPool            chunkenc.Pool
-	ChunkWriteBufferSize int
-	// StripeSize sets the number of entries in the hash map, it must be a power of 2.
-	// A larger StripeSize will allocate more memory up-front, but will increase performance when handling a large number of series.
-	// A smaller StripeSize reduces the memory allocated, but can decrease performance with large number of series.
-	StripeSize     int
-	SeriesCallback SeriesLifecycleCallback
-}
-
-func DefaultHeadOptions() *HeadOptions {
-	return &HeadOptions{
-		ChunkRange:           DefaultBlockDuration,
-		ChunkDirRoot:         "",
-		ChunkPool:            chunkenc.NewPool(),
-		ChunkWriteBufferSize: chunks.DefaultWriteBufferSize,
-		StripeSize:           DefaultStripeSize,
-		SeriesCallback:       &noopSeriesLifecycleCallback{},
-	}
 }
 
 type headMetrics struct {
@@ -315,21 +292,23 @@ func (h *Head) PostingsCardinalityStats(statsByLabelName string) *index.Postings
 }
 
 // NewHead opens the head block in dir.
-func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOptions) (*Head, error) {
+// stripeSize sets the number of entries in the hash map, it must be a power of 2.
+// A larger stripeSize will allocate more memory up-front, but will increase performance when handling a large number of series.
+// A smaller stripeSize reduces the memory allocated, but can decrease performance with large number of series.
+func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int64, chkDirRoot string, chkPool chunkenc.Pool, chkWriteBufferSize, stripeSize int, seriesCallback SeriesLifecycleCallback) (*Head, error) {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
-	if opts.ChunkRange < 1 {
-		return nil, errors.Errorf("invalid chunk range %d", opts.ChunkRange)
+	if chunkRange < 1 {
+		return nil, errors.Errorf("invalid chunk range %d", chunkRange)
 	}
-	if opts.SeriesCallback == nil {
-		opts.SeriesCallback = &noopSeriesLifecycleCallback{}
+	if seriesCallback == nil {
+		seriesCallback = &noopSeriesLifecycleCallback{}
 	}
 	h := &Head{
 		wal:        wal,
 		logger:     l,
-		opts:       opts,
-		series:     newStripeSeries(opts.StripeSize, opts.SeriesCallback),
+		series:     newStripeSeries(stripeSize, seriesCallback),
 		symbols:    map[string]struct{}{},
 		postings:   index.NewUnorderedMemPostings(),
 		tombstones: tombstones.NewMemTombstones(),
@@ -340,23 +319,21 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOpti
 				return &memChunk{}
 			},
 		},
+		chunkDirRoot:   chkDirRoot,
+		seriesCallback: seriesCallback,
 	}
-	h.chunkRange.Store(opts.ChunkRange)
+	h.chunkRange.Store(chunkRange)
 	h.minTime.Store(math.MaxInt64)
 	h.maxTime.Store(math.MinInt64)
 	h.lastWALTruncationTime.Store(math.MinInt64)
 	h.metrics = newHeadMetrics(h, r)
 
-	if opts.ChunkPool == nil {
-		opts.ChunkPool = chunkenc.NewPool()
+	if chkPool == nil {
+		chkPool = chunkenc.NewPool()
 	}
 
 	var err error
-	h.chunkDiskMapper, err = chunks.NewChunkDiskMapper(
-		mmappedChunksDir(opts.ChunkDirRoot),
-		opts.ChunkPool,
-		opts.ChunkWriteBufferSize,
-	)
+	h.chunkDiskMapper, err = chunks.NewChunkDiskMapper(mmappedChunksDir(chkDirRoot), chkPool, chkWriteBufferSize)
 	if err != nil {
 		return nil, err
 	}
@@ -574,7 +551,7 @@ Outer:
 					h.lastSeriesID.Store(s.Ref)
 				}
 			}
-			//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
+			//lint:ignore SA6002 relax staticcheck verification.
 			seriesPool.Put(v)
 		case []record.RefSample:
 			samples := v
@@ -607,7 +584,7 @@ Outer:
 				}
 				samples = samples[m:]
 			}
-			//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
+			//lint:ignore SA6002 relax staticcheck verification.
 			samplesPool.Put(v)
 		case []tombstones.Stone:
 			for _, s := range v {
@@ -622,7 +599,7 @@ Outer:
 					h.tombstones.AddInterval(s.Ref, itv)
 				}
 			}
-			//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
+			//lint:ignore SA6002 relax staticcheck verification.
 			tstonesPool.Put(v)
 		default:
 			panic(fmt.Errorf("unexpected decoded type: %T", d))
@@ -1033,13 +1010,6 @@ func (h *RangeHead) Meta() BlockMeta {
 	}
 }
 
-// String returns an human readable representation of the range head. It's important to
-// keep this function in order to avoid the struct dump when the head is stringified in
-// errors or logs.
-func (h *RangeHead) String() string {
-	return fmt.Sprintf("range head (mint: %d, maxt: %d)", h.MinTime(), h.MaxTime())
-}
-
 // initAppender is a helper to initialize the time bounds of the head
 // upon the first sample it receives.
 type initAppender struct {
@@ -1130,7 +1100,7 @@ func (h *Head) getAppendBuffer() []record.RefSample {
 }
 
 func (h *Head) putAppendBuffer(b []record.RefSample) {
-	//nolint:staticcheck // Ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 	h.appendPool.Put(b[:0])
 }
 
@@ -1143,7 +1113,7 @@ func (h *Head) getSeriesBuffer() []*memSeries {
 }
 
 func (h *Head) putSeriesBuffer(b []*memSeries) {
-	//nolint:staticcheck // Ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 	h.seriesPool.Put(b[:0])
 }
 
@@ -1156,7 +1126,7 @@ func (h *Head) getBytesBuffer() []byte {
 }
 
 func (h *Head) putBytesBuffer(b []byte) {
-	//nolint:staticcheck // Ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 	h.bytesPool.Put(b[:0])
 }
 
@@ -1522,13 +1492,6 @@ func (h *Head) Close() error {
 	return errs.Err()
 }
 
-// String returns an human readable representation of the TSDB head. It's important to
-// keep this function in order to avoid the struct dump when the head is stringified in
-// errors or logs.
-func (h *Head) String() string {
-	return "head"
-}
-
 type headChunkReader struct {
 	head       *Head
 	mint, maxt int64
@@ -1635,10 +1598,8 @@ func (h *headIndexReader) Symbols() index.StringIter {
 
 // SortedLabelValues returns label values present in the head for the
 // specific label name that are within the time range mint to maxt.
-// If matchers are specified the returned result set is reduced
-// to label values of metrics matching the matchers.
-func (h *headIndexReader) SortedLabelValues(name string, matchers ...*labels.Matcher) ([]string, error) {
-	values, err := h.LabelValues(name, matchers...)
+func (h *headIndexReader) SortedLabelValues(name string) ([]string, error) {
+	values, err := h.LabelValues(name)
 	if err == nil {
 		sort.Strings(values)
 	}
@@ -1647,20 +1608,15 @@ func (h *headIndexReader) SortedLabelValues(name string, matchers ...*labels.Mat
 
 // LabelValues returns label values present in the head for the
 // specific label name that are within the time range mint to maxt.
-// If matchers are specified the returned result set is reduced
-// to label values of metrics matching the matchers.
-func (h *headIndexReader) LabelValues(name string, matchers ...*labels.Matcher) ([]string, error) {
+func (h *headIndexReader) LabelValues(name string) ([]string, error) {
+	h.head.symMtx.RLock()
+	defer h.head.symMtx.RUnlock()
 	if h.maxt < h.head.MinTime() || h.mint > h.head.MaxTime() {
 		return []string{}, nil
 	}
 
-	if len(matchers) == 0 {
-		h.head.symMtx.RLock()
-		defer h.head.symMtx.RUnlock()
-		return h.head.postings.LabelValues(name), nil
-	}
-
-	return labelValuesWithMatchers(h, name, matchers...)
+	values := h.head.postings.LabelValues(name)
+	return values, nil
 }
 
 // LabelNames returns all the unique label names present in the head
@@ -1751,21 +1707,6 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 	}
 
 	return nil
-}
-
-// LabelValueFor returns label value for the given label name in the series referred to by ID.
-func (h *headIndexReader) LabelValueFor(id uint64, label string) (string, error) {
-	memSeries := h.head.series.getByID(id)
-	if memSeries == nil {
-		return "", storage.ErrNotFound
-	}
-
-	value := memSeries.lset.Get(label)
-	if value == "" {
-		return "", storage.ErrNotFound
-	}
-
-	return value, nil
 }
 
 func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*memSeries, bool, error) {
