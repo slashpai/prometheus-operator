@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+	"github.com/mitchellh/hashstructure"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
@@ -160,6 +162,12 @@ func (c *Operator) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "error creating alertmanager informers")
 	}
+
+	var alertmanagerStores []cache.Store
+	for _, informer := range c.alrtInfs.GetInformers() {
+		alertmanagerStores = append(alertmanagerStores, informer.Informer().GetStore())
+	}
+	c.metrics.MustRegister(newAlertmanagerCollectorForStores(alertmanagerStores...))
 
 	c.alrtCfgInfs, err = informers.NewInformersForResource(
 		informers.NewMonitoringInformerFactories(
@@ -546,7 +554,12 @@ func (c *Operator) alertmanagerForStatefulSet(sset interface{}) *monitoringv1.Al
 		return nil
 	}
 
-	aKey := statefulSetKeyToAlertmanagerKey(key)
+	match, aKey := statefulSetKeyToAlertmanagerKey(key)
+	if !match {
+		level.Debug(c.logger).Log("msg", "StatefulSet key did not match an Alertmanager key format", "key", key)
+		return nil
+	}
+
 	a, err := c.alrtInfs.Get(aKey)
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -564,9 +577,17 @@ func statefulSetNameFromAlertmanagerName(name string) string {
 	return "alertmanager-" + name
 }
 
-func statefulSetKeyToAlertmanagerKey(key string) string {
-	keyParts := strings.Split(key, "/")
-	return keyParts[0] + "/" + strings.TrimPrefix(keyParts[1], "alertmanager-")
+func statefulSetKeyToAlertmanagerKey(key string) (bool, string) {
+	r := regexp.MustCompile("^(.+)/alertmanager-(.+)$")
+
+	matches := r.FindAllStringSubmatch(key, 2)
+	if len(matches) != 1 {
+		return false, ""
+	}
+	if len(matches[0]) != 3 {
+		return false, ""
+	}
+	return true, matches[0][1] + "/" + matches[0][2]
 }
 
 func alertmanagerKeyToStatefulSetKey(key string) string {
@@ -598,6 +619,10 @@ func (c *Operator) handleAlertmanagerDelete(obj interface{}) {
 }
 
 func (c *Operator) handleAlertmanagerUpdate(old, cur interface{}) {
+	if old.(*monitoringv1.Alertmanager).ResourceVersion == cur.(*monitoringv1.Alertmanager).ResourceVersion {
+		return
+	}
+
 	key, ok := c.keyFunc(cur)
 	if !ok {
 		return
@@ -611,12 +636,18 @@ func (c *Operator) handleAlertmanagerUpdate(old, cur interface{}) {
 
 func (c *Operator) handleStatefulSetDelete(obj interface{}) {
 	if a := c.alertmanagerForStatefulSet(obj); a != nil {
+		level.Debug(c.logger).Log("msg", "StatefulSet delete")
+		c.metrics.TriggerByCounter("StatefulSet", "delete").Inc()
+
 		c.enqueue(a)
 	}
 }
 
 func (c *Operator) handleStatefulSetAdd(obj interface{}) {
 	if a := c.alertmanagerForStatefulSet(obj); a != nil {
+		level.Debug(c.logger).Log("msg", "StatefulSet added")
+		c.metrics.TriggerByCounter("StatefulSet", "add").Inc()
+
 		c.enqueue(a)
 	}
 }
@@ -635,6 +666,9 @@ func (c *Operator) handleStatefulSetUpdate(oldo, curo interface{}) {
 
 	// Wake up Alertmanager resource the deployment belongs to.
 	if a := c.alertmanagerForStatefulSet(cur); a != nil {
+		level.Debug(c.logger).Log("msg", "StatefulSet updated")
+		c.metrics.TriggerByCounter("StatefulSet", "update").Inc()
+
 		c.enqueue(a)
 	}
 }
@@ -678,33 +712,39 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 		return errors.Wrap(err, "synchronizing governing service failed")
 	}
 
-	ssetClient := c.kclient.AppsV1().StatefulSets(am.Namespace)
-	// Ensure we have a StatefulSet running Alertmanager deployed.
-	obj, err := c.ssetInfs.Get(alertmanagerKeyToStatefulSetKey(key))
-
-	if err != nil && !apierrors.IsNotFound(err) {
-		return errors.Wrap(err, "retrieving statefulset failed")
+	newSSetInputHash, err := createSSetInputHash(*am, c.config)
+	if err != nil {
+		return err
 	}
 
-	if apierrors.IsNotFound(err) {
-		sset, err := makeStatefulSet(am, nil, c.config)
-		if err != nil {
-			return errors.Wrap(err, "making the statefulset, to create, failed")
+	sset, err := makeStatefulSet(am, c.config, newSSetInputHash)
+	if err != nil {
+		return errors.Wrap(err, "failed to make statefulset")
+	}
+	operator.SanitizeSTS(sset)
+
+	ssetClient := c.kclient.AppsV1().StatefulSets(am.Namespace)
+
+	obj, err := c.ssetInfs.Get(alertmanagerKeyToStatefulSetKey(key))
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return errors.Wrap(err, "failed to retrieve statefulset")
 		}
-		operator.SanitizeSTS(sset)
+
 		if _, err := ssetClient.Create(ctx, sset, metav1.CreateOptions{}); err != nil {
-			return errors.Wrap(err, "creating statefulset failed")
+			return errors.Wrap(err, "failed to create statefulset")
 		}
+
 		return nil
 	}
 
-	sset, err := makeStatefulSet(am, obj.(*appsv1.StatefulSet), c.config)
-	if err != nil {
-		return errors.Wrap(err, "making the statefulset, to update, failed")
+	oldSSetInputHash := obj.(*appsv1.StatefulSet).ObjectMeta.Annotations[sSetInputHashName]
+	if newSSetInputHash == oldSSetInputHash {
+		level.Debug(c.logger).Log("msg", "new statefulset generation inputs match current, skipping any actions")
+		return nil
 	}
 
-	operator.SanitizeSTS(sset)
-	_, err = ssetClient.Update(ctx, sset, metav1.UpdateOptions{})
+	err = k8sutil.UpdateStatefulSet(ctx, ssetClient, sset)
 	sErr, ok := err.(*apierrors.StatusError)
 
 	if ok && sErr.ErrStatus.Code == 422 && sErr.ErrStatus.Reason == metav1.StatusReasonInvalid {
@@ -722,6 +762,23 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 	}
 
 	return nil
+}
+
+func createSSetInputHash(a monitoringv1.Alertmanager, c Config) (string, error) {
+	hash, err := hashstructure.Hash(struct {
+		A monitoringv1.Alertmanager
+		C Config
+	}{a, c},
+		nil,
+	)
+	if err != nil {
+		return "", errors.Wrap(
+			err,
+			"failed to calculate combined hash of Alertmanager CRD and config",
+		)
+	}
+
+	return fmt.Sprintf("%d", hash), nil
 }
 
 func (c *Operator) provisionAlertmanagerConfiguration(ctx context.Context, am *monitoringv1.Alertmanager, store *assets.Store) error {
@@ -837,7 +894,7 @@ func (c *Operator) createOrUpdateGeneratedConfigSecret(ctx context.Context, am *
 		_, err = sClient.Create(ctx, generatedConfigSecret, metav1.CreateOptions{})
 		level.Debug(c.logger).Log("msg", "created generated config secret", "secretname", generatedConfigSecret.Name)
 	} else {
-		_, err = sClient.Update(ctx, generatedConfigSecret, metav1.UpdateOptions{})
+		err = k8sutil.UpdateSecret(ctx, sClient, generatedConfigSecret)
 		level.Debug(c.logger).Log("msg", "updated generated config secret", "secretname", generatedConfigSecret.Name)
 	}
 
@@ -881,12 +938,15 @@ func (c *Operator) selectAlertmanagerConfigs(ctx context.Context, am *monitoring
 	}
 
 	for _, ns := range namespaces {
-		c.alrtCfgInfs.ListAllByNamespace(ns, amConfigSelector, func(obj interface{}) {
+		err := c.alrtCfgInfs.ListAllByNamespace(ns, amConfigSelector, func(obj interface{}) {
 			k, ok := c.keyFunc(obj)
 			if ok {
 				amConfigs[k] = obj.(*monitoringv1alpha1.AlertmanagerConfig)
 			}
 		})
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to list alertmanager configs in namespace %s", ns)
+		}
 	}
 
 	var rejected int
@@ -929,7 +989,7 @@ func checkAlertmanagerConfig(ctx context.Context, amc *monitoringv1alpha1.Alertm
 		return err
 	}
 
-	return checkAlertmanagerRoutes(amc.Spec.Route, receiverNames)
+	return checkAlertmanagerRoutes(amc.Spec.Route, receiverNames, true)
 }
 
 func checkReceivers(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerConfig, store *assets.Store) (map[string]struct{}, error) {
@@ -1235,12 +1295,12 @@ func checkPushoverConfigs(ctx context.Context, configs []monitoringv1alpha1.Push
 }
 
 // checkAlertmanagerRoutes verifies that the given route and all its children are semantically valid.
-func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]struct{}) error {
+func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]struct{}, topLevelRoute bool) error {
 	if r == nil {
 		return nil
 	}
 
-	if _, found := receivers[r.Receiver]; !found {
+	if _, found := receivers[r.Receiver]; !found && (r.Receiver != "" || topLevelRoute) {
 		return errors.Errorf("receiver %q not found", r.Receiver)
 	}
 
@@ -1250,7 +1310,7 @@ func checkAlertmanagerRoutes(r *monitoringv1alpha1.Route, receivers map[string]s
 	}
 
 	for i := range children {
-		if err := checkAlertmanagerRoutes(&children[i], receivers); err != nil {
+		if err := checkAlertmanagerRoutes(&children[i], receivers, false); err != nil {
 			return errors.Wrapf(err, "route[%d]", i)
 		}
 	}
@@ -1321,7 +1381,7 @@ func (c *Operator) createOrUpdateTLSAssetSecret(ctx context.Context, am *monitor
 		level.Debug(c.logger).Log("msg", "created tlsAssetsSecret", "secretname", tlsAssetsSecret.Name)
 
 	} else {
-		_, err = sClient.Update(ctx, tlsAssetsSecret, metav1.UpdateOptions{})
+		err = k8sutil.UpdateSecret(ctx, sClient, tlsAssetsSecret)
 		level.Debug(c.logger).Log("msg", "updated tlsAssetsSecret", "secretname", tlsAssetsSecret.Name)
 	}
 
@@ -1355,7 +1415,7 @@ func ListOptions(name string) metav1.ListOptions {
 	}
 }
 
-func AlertmanagerStatus(ctx context.Context, kclient kubernetes.Interface, a *monitoringv1.Alertmanager) (*monitoringv1.AlertmanagerStatus, []v1.Pod, error) {
+func Status(ctx context.Context, kclient kubernetes.Interface, a *monitoringv1.Alertmanager) (*monitoringv1.AlertmanagerStatus, []v1.Pod, error) {
 	res := &monitoringv1.AlertmanagerStatus{Paused: a.Spec.Paused}
 
 	pods, err := kclient.CoreV1().Pods(a.Namespace).List(ctx, ListOptions(a.Name))
