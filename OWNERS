@@ -3,23 +3,39 @@ component: "Monitoring"
 reviewers:
 - bwplotka
 - dgrisonnet
-- LiliC
 - metalmatze
 - paulfantom
-- s-urbaniak
 - simonpasquier
 - squat
+- slashpai
+- prashbnair
+- arajkumar
+- sthaha
+- PhilipGough
+- bison
+- fpetkovski
+- raptorsun
+- jan--f
 
 approvers:
 - bwplotka
 - dgrisonnet
-- LiliC
 - metalmatze
 - paulfantom
-- s-urbaniak
 - simonpasquier
 - squat
+- slashpai
+- prashbnair
+- arajkumar
+- sthaha
+- PhilipGough
+- bison
+- fpetkovski
+- raptorsun
+- jan--f
 
 emeritus_approvers:
 - krasi-georgiev
 - pgier
+- s-urbaniak
+- LiliC
