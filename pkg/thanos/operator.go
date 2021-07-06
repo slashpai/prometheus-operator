@@ -230,8 +230,6 @@ func New(ctx context.Context, conf operator.Config, logger log.Logger, r prometh
 
 // waitForCacheSync waits for the informers' caches to be synced.
 func (o *Operator) waitForCacheSync(ctx context.Context) error {
-	ok := true
-
 	for _, infs := range []struct {
 		name                 string
 		informersForResource *informers.ForResource
@@ -243,7 +241,7 @@ func (o *Operator) waitForCacheSync(ctx context.Context) error {
 	} {
 		for _, inf := range infs.informersForResource.GetInformers() {
 			if !operator.WaitForNamedCacheSync(ctx, "thanos", log.With(o.logger, "informer", infs.name), inf.Informer()) {
-				ok = false
+				return errors.Errorf("failed to sync cache for %s informer", infs.name)
 			}
 		}
 	}
@@ -256,12 +254,8 @@ func (o *Operator) waitForCacheSync(ctx context.Context) error {
 		{"RuleNamespace", o.nsRuleInf},
 	} {
 		if !operator.WaitForNamedCacheSync(ctx, "thanos", log.With(o.logger, "informer", inf.name), inf.informer) {
-			ok = false
+			return errors.Errorf("failed to sync cache for %s informer", inf.name)
 		}
-	}
-
-	if !ok {
-		return errors.New("failed to sync caches")
 	}
 
 	level.Info(o.logger).Log("msg", "successfully synced all caches")
@@ -645,7 +639,8 @@ func (o *Operator) sync(ctx context.Context, key string) error {
 		return nil
 	}
 
-	level.Info(o.logger).Log("msg", "sync thanos-ruler", "key", key)
+	logger := log.With(o.logger, "key", key)
+	level.Info(logger).Log("msg", "sync thanos-ruler")
 
 	ruleConfigMapNames, err := o.createOrUpdateRuleConfigMaps(ctx, tr)
 	if err != nil {
@@ -700,7 +695,7 @@ func (o *Operator) sync(ctx context.Context, key string) error {
 
 	oldSSetInputHash := obj.(*appsv1.StatefulSet).ObjectMeta.Annotations[sSetInputHashName]
 	if newSSetInputHash == oldSSetInputHash {
-		level.Debug(o.logger).Log("msg", "new statefulset generation inputs match current, skipping any actions")
+		level.Debug(logger).Log("msg", "new statefulset generation inputs match current, skipping any actions")
 		return nil
 	}
 
@@ -709,7 +704,14 @@ func (o *Operator) sync(ctx context.Context, key string) error {
 
 	if ok && sErr.ErrStatus.Code == 422 && sErr.ErrStatus.Reason == metav1.StatusReasonInvalid {
 		o.metrics.StsDeleteCreateCounter().Inc()
-		level.Info(o.logger).Log("msg", "resolving illegal update of ThanosRuler StatefulSet", "details", sErr.ErrStatus.Details)
+
+		// Gather only reason for failed update
+		failMsg := make([]string, len(sErr.ErrStatus.Details.Causes))
+		for i, cause := range sErr.ErrStatus.Details.Causes {
+			failMsg[i] = cause.Message
+		}
+
+		level.Info(logger).Log("msg", "recreating ThanosRuler StatefulSet because the update operation wasn't possible", "reason", strings.Join(failMsg, ", "))
 		propagationPolicy := metav1.DeletePropagationForeground
 		if err := ssetClient.Delete(ctx, sset.GetName(), metav1.DeleteOptions{PropagationPolicy: &propagationPolicy}); err != nil {
 			return errors.Wrap(err, "failed to delete StatefulSet to avoid forbidden action")

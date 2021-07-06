@@ -43,6 +43,7 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	"golang.org/x/sync/errgroup"
@@ -366,7 +367,7 @@ func Main() int {
 		return 1
 	}
 
-	var tlsConfig *tls.Config = nil
+	var tlsConfig *tls.Config
 	if serverTLS {
 		if rawTLSCipherSuites != "" {
 			cfg.ServerTLSConfig.CipherSuites = strings.Split(rawTLSCipherSuites, ",")
@@ -391,8 +392,8 @@ func Main() int {
 	})
 
 	r.MustRegister(
-		prometheus.NewGoCollector(),
-		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		validationTriggeredCounter,
 		validationErrorsCounter,
 		version.NewCollector("prometheus_operator"),
@@ -429,15 +430,11 @@ func Main() int {
 		tlsConfig.GetCertificate = r.GetCertificate
 
 		wg.Go(func() error {
-			t := time.NewTicker(cfg.ServerTLSConfig.ReloadInterval)
 			for {
-				select {
-				case <-t.C:
-				case <-ctx.Done():
-					return nil
-				}
+				// r.Watch will wait ReloadInterval, so this is not
+				// a hot loop
 				if err := r.Watch(ctx); err != nil {
-					level.Warn(logger).Log("msg", "error reloading server TLS certificate",
+					level.Warn(logger).Log("msg", "error watching certificate reloader",
 						"err", err)
 				} else {
 					return nil

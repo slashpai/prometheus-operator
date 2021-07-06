@@ -18,6 +18,9 @@ Release cadence of first pre-releases being cut is 6 weeks.
 | v0.48   | 2021-05-19                                 | Matthias Loibl (GitHub: @metalmatze)        |
 | v0.49   | 2021-06-30                                 | Pawel Krupa (GitHub: @paulfantom)           |
 | v0.50   | 2021-08-11                                 | **searching for volunteer**                 |
+| v0.51   | 2021-09-08                                 | Simon Pasquier (GitHub: @simonpasquier)     |
+| v0.52   | 2021-10-20                                 | **searching for volunteer**                 |
+| v0.53   | 2021-12-15                                 | **searching for volunteer**                 |
 
 # How to cut a new release
 
@@ -100,6 +103,10 @@ Our CI pipeline will automatically push the container images to [quay.io](https:
 Go to  https://github.com/prometheus-operator/prometheus-operator/releases/new, associate the new release with the before pushed tag, paste in changes made to `CHANGELOG.md` and click "Publish release".
 
 For patch releases, submit a pull request to merge back the release branch into the `master` branch.
+
+## Update website
+
+Bump the operator's version in the [website](https://github.com/prometheus-operator/website/blob/main/data/prometheusOperator.json) repository.
 
 ## Update kube-prometheus
 

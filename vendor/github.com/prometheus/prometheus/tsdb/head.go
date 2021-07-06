@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,6 +58,7 @@ var (
 type ExemplarStorage interface {
 	storage.ExemplarQueryable
 	AddExemplar(labels.Labels, exemplar.Exemplar) error
+	ValidateExemplar(labels.Labels, exemplar.Exemplar) error
 }
 
 // Head handles reads and writes of time series data within a time window.
@@ -104,6 +105,8 @@ type Head struct {
 
 	closedMtx sync.Mutex
 	closed    bool
+
+	stats *HeadStats
 }
 
 // HeadOptions are parameters for the Head block.
@@ -306,6 +309,38 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 	return m
 }
 
+// HeadStats are the statistics for the head component of the DB.
+type HeadStats struct {
+	WALReplayStatus *WALReplayStatus
+}
+
+// NewHeadStats returns a new HeadStats object.
+func NewHeadStats() *HeadStats {
+	return &HeadStats{
+		WALReplayStatus: &WALReplayStatus{},
+	}
+}
+
+// WALReplayStatus contains status information about the WAL replay.
+type WALReplayStatus struct {
+	sync.RWMutex
+	Min     int
+	Max     int
+	Current int
+}
+
+// GetWALReplayStatus returns the WAL replay status information.
+func (s *WALReplayStatus) GetWALReplayStatus() WALReplayStatus {
+	s.RLock()
+	defer s.RUnlock()
+
+	return WALReplayStatus{
+		Min:     s.Min,
+		Max:     s.Max,
+		Current: s.Current,
+	}
+}
+
 const cardinalityCacheExpirationTime = time.Duration(30) * time.Second
 
 // PostingsCardinalityStats returns top 10 highest cardinality stats By label and value names.
@@ -327,7 +362,7 @@ func (h *Head) PostingsCardinalityStats(statsByLabelName string) *index.Postings
 }
 
 // NewHead opens the head block in dir.
-func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOptions) (*Head, error) {
+func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOptions, stats *HeadStats) (*Head, error) {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
@@ -341,6 +376,10 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOpti
 	es, err := NewCircularExemplarStorage(opts.NumExemplars, r)
 	if err != nil {
 		return nil, err
+	}
+
+	if stats == nil {
+		stats = NewHeadStats()
 	}
 
 	h := &Head{
@@ -359,6 +398,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, opts *HeadOpti
 				return &memChunk{}
 			},
 		},
+		stats: stats,
 	}
 	h.chunkRange.Store(opts.ChunkRange)
 	h.minTime.Store(math.MaxInt64)
@@ -459,15 +499,17 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64, mmappedChunks 
 	// Track number of samples that referenced a series we don't know about
 	// for error reporting.
 	var unknownRefs atomic.Uint64
+	var unknownExemplarRefs atomic.Uint64
 
 	// Start workers that each process samples for a partition of the series ID space.
 	// They are connected through a ring of channels which ensures that all sample batches
 	// read from the WAL are processed in order.
 	var (
-		wg      sync.WaitGroup
-		n       = runtime.GOMAXPROCS(0)
-		inputs  = make([]chan []record.RefSample, n)
-		outputs = make([]chan []record.RefSample, n)
+		wg             sync.WaitGroup
+		n              = runtime.GOMAXPROCS(0)
+		inputs         = make([]chan []record.RefSample, n)
+		outputs        = make([]chan []record.RefSample, n)
+		exemplarsInput chan record.RefExemplar
 
 		dec    record.Decoder
 		shards = make([][]record.RefSample, n)
@@ -489,6 +531,11 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64, mmappedChunks 
 				return []tombstones.Stone{}
 			},
 		}
+		exemplarsPool = sync.Pool{
+			New: func() interface{} {
+				return []record.RefExemplar{}
+			},
+		}
 	)
 
 	defer func() {
@@ -500,6 +547,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64, mmappedChunks 
 				for range outputs[i] {
 				}
 			}
+			close(exemplarsInput)
 			wg.Wait()
 		}
 	}()
@@ -515,6 +563,29 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64, mmappedChunks 
 			wg.Done()
 		}(inputs[i], outputs[i])
 	}
+
+	wg.Add(1)
+	exemplarsInput = make(chan record.RefExemplar, 300)
+	go func(input <-chan record.RefExemplar) {
+		defer wg.Done()
+		for e := range input {
+			ms := h.series.getByID(e.Ref)
+			if ms == nil {
+				unknownExemplarRefs.Inc()
+				continue
+			}
+
+			if e.T < h.minValidTime.Load() {
+				continue
+			}
+			// At the moment the only possible error here is out of order exemplars, which we shouldn't see when
+			// replaying the WAL, so lets just log the error if it's not that type.
+			err = h.exemplars.AddExemplar(ms.lset, exemplar.Exemplar{Ts: e.T, Value: e.V, Labels: e.Labels})
+			if err != nil && err == storage.ErrOutOfOrderExemplar {
+				level.Warn(h.logger).Log("msg", "Unexpected error when replaying WAL on exemplar record", "err", err)
+			}
+		}
+	}(exemplarsInput)
 
 	go func() {
 		defer close(decoded)
@@ -557,6 +628,18 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64, mmappedChunks 
 					return
 				}
 				decoded <- tstones
+			case record.Exemplars:
+				exemplars := exemplarsPool.Get().([]record.RefExemplar)[:0]
+				exemplars, err = dec.Exemplars(rec, exemplars)
+				if err != nil {
+					decodeErr = &wal.CorruptionErr{
+						Err:     errors.Wrap(err, "decode exemplars"),
+						Segment: r.Segment(),
+						Offset:  r.Offset(),
+					}
+					return
+				}
+				decoded <- exemplars
 			default:
 				// Noop.
 			}
@@ -646,6 +729,12 @@ Outer:
 			}
 			//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
 			tstonesPool.Put(v)
+		case []record.RefExemplar:
+			for _, e := range v {
+				exemplarsInput <- e
+			}
+			//nolint:staticcheck // Ignore SA6002 relax staticcheck verification.
+			exemplarsPool.Put(v)
 		default:
 			panic(fmt.Errorf("unexpected decoded type: %T", d))
 		}
@@ -667,14 +756,15 @@ Outer:
 		for range outputs[i] {
 		}
 	}
+	close(exemplarsInput)
 	wg.Wait()
 
 	if r.Err() != nil {
 		return errors.Wrap(r.Err(), "read records")
 	}
 
-	if unknownRefs.Load() > 0 {
-		level.Warn(h.logger).Log("msg", "Unknown series references", "count", unknownRefs.Load())
+	if unknownRefs.Load() > 0 || unknownExemplarRefs.Load() > 0 {
+		level.Warn(h.logger).Log("msg", "Unknown series references", "samples", unknownRefs.Load(), "exemplars", unknownExemplarRefs.Load())
 	}
 	return nil
 }
@@ -744,6 +834,8 @@ func (h *Head) Init(minValidTime int64) error {
 		return errors.Wrap(err, "finding WAL segments")
 	}
 
+	h.startWALReplayStatus(startFrom, last)
+
 	// Backfill segments from the most recent checkpoint onwards.
 	for i := startFrom; i <= last; i++ {
 		s, err := wal.OpenReadSegment(wal.SegmentName(h.wal.Dir(), i))
@@ -760,6 +852,7 @@ func (h *Head) Init(minValidTime int64) error {
 			return err
 		}
 		level.Info(h.logger).Log("msg", "WAL segment loaded", "segment", i, "maxSegment", last)
+		h.updateWALReplayStatusRead(i)
 	}
 
 	walReplayDuration := time.Since(start)
@@ -1339,6 +1432,15 @@ func (a *headAppender) AppendExemplar(ref uint64, _ labels.Labels, e exemplar.Ex
 	// Ensure no empty labels have gotten through.
 	e.Labels = e.Labels.WithoutEmpty()
 
+	err := a.exemplarAppender.ValidateExemplar(s.lset, e)
+	if err != nil {
+		if err == storage.ErrDuplicateExemplar {
+			// Duplicate, don't return an error but don't accept the exemplar.
+			return 0, nil
+		}
+		return 0, err
+	}
+
 	a.exemplars = append(a.exemplars, exemplarWithSeriesRef{ref, e})
 
 	return s.ref, nil
@@ -1382,7 +1484,28 @@ func (a *headAppender) log() error {
 			return errors.Wrap(err, "log samples")
 		}
 	}
+	if len(a.exemplars) > 0 {
+		rec = enc.Exemplars(exemplarsForEncoding(a.exemplars), buf)
+		buf = rec[:0]
+
+		if err := a.head.wal.Log(rec); err != nil {
+			return errors.Wrap(err, "log exemplars")
+		}
+	}
 	return nil
+}
+
+func exemplarsForEncoding(es []exemplarWithSeriesRef) []record.RefExemplar {
+	ret := make([]record.RefExemplar, 0, len(es))
+	for _, e := range es {
+		ret = append(ret, record.RefExemplar{
+			Ref:    e.ref,
+			T:      e.exemplar.Ts,
+			V:      e.exemplar.Value,
+			Labels: e.exemplar.Labels,
+		})
+	}
+	return ret
 }
 
 func (a *headAppender) Commit() (err error) {
@@ -1390,6 +1513,7 @@ func (a *headAppender) Commit() (err error) {
 		return ErrAppenderClosed
 	}
 	defer func() { a.closed = true }()
+
 	if err := a.log(); err != nil {
 		_ = a.Rollback() // Most likely the same error will happen again.
 		return errors.Wrap(err, "write to WAL")
@@ -1404,7 +1528,6 @@ func (a *headAppender) Commit() (err error) {
 				continue
 			}
 			level.Debug(a.head.logger).Log("msg", "Unknown error while adding exemplar", "err", err)
-			continue
 		}
 	}
 
@@ -1458,7 +1581,9 @@ func (a *headAppender) Rollback() (err error) {
 		series.Unlock()
 	}
 	a.head.putAppendBuffer(a.samples)
+	a.head.putExemplarBuffer(a.exemplars)
 	a.samples = nil
+	a.exemplars = nil
 
 	// Series are created in the head memory regardless of rollback. Thus we have
 	// to log them to the WAL in any case.
@@ -2538,6 +2663,23 @@ type memSafeIterator struct {
 	buf   [4]sample
 }
 
+func (it *memSafeIterator) Seek(t int64) bool {
+	if it.Err() != nil {
+		return false
+	}
+
+	ts, _ := it.At()
+
+	for t > ts || it.i == -1 {
+		if !it.Next() {
+			return false
+		}
+		ts, _ = it.At()
+	}
+
+	return true
+}
+
 func (it *memSafeIterator) Next() bool {
 	if it.i+1 >= it.stopAfter {
 		return false
@@ -2600,4 +2742,20 @@ func (h *Head) Size() int64 {
 
 func (h *RangeHead) Size() int64 {
 	return h.head.Size()
+}
+
+func (h *Head) startWALReplayStatus(startFrom, last int) {
+	h.stats.WALReplayStatus.Lock()
+	defer h.stats.WALReplayStatus.Unlock()
+
+	h.stats.WALReplayStatus.Min = startFrom
+	h.stats.WALReplayStatus.Max = last
+	h.stats.WALReplayStatus.Current = startFrom
+}
+
+func (h *Head) updateWALReplayStatusRead(current int) {
+	h.stats.WALReplayStatus.Lock()
+	defer h.stats.WALReplayStatus.Unlock()
+
+	h.stats.WALReplayStatus.Current = current
 }
