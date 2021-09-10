@@ -28,7 +28,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: 0.49.0
+    app.kubernetes.io/version: 0.50.0
   name: prometheus-operator
 rules:
 - apiGroups:
@@ -135,7 +135,7 @@ In addition to the resources Prometheus itself needs to access, the Prometheus s
 
 [embedmd]:# (../example/rbac/prometheus/prometheus-cluster-role.yaml)
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: prometheus
@@ -177,7 +177,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: 0.49.0
+    app.kubernetes.io/version: 0.50.0
   name: prometheus-operator
   namespace: default
 ```
@@ -194,7 +194,7 @@ metadata:
   labels:
     app.kubernetes.io/component: controller
     app.kubernetes.io/name: prometheus-operator
-    app.kubernetes.io/version: 0.49.0
+    app.kubernetes.io/version: 0.50.0
   name: prometheus-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -222,7 +222,7 @@ And then because the `ClusterRole` named `prometheus`, as described above, is li
 
 [embedmd]:# (../example/rbac/prometheus/prometheus-cluster-role-binding.yaml)
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: prometheus
