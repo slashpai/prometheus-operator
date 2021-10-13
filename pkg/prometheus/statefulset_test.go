@@ -21,8 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/util/intstr"
-
+	"github.com/kylelemons/godebug/pretty"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
 	"github.com/stretchr/testify/require"
@@ -30,12 +29,12 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/kylelemons/godebug/pretty"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 var (
 	defaultTestConfig = &operator.Config{
+		LocalHost: "localhost",
 		ReloaderConfig: operator.ReloaderConfig{
 			CPURequest:    "100m",
 			CPULimit:      "100m",
@@ -450,6 +449,7 @@ func TestListenTLS(t *testing.T) {
 					},
 				},
 			},
+			Thanos: &monitoringv1.ThanosSpec{},
 		},
 	}, defaultTestConfig, nil, "", 0)
 	if err != nil {
@@ -472,6 +472,30 @@ func TestListenTLS(t *testing.T) {
 	if !reflect.DeepEqual(actualReadinessProbe, expectedReadinessProbe) {
 		t.Fatalf("Readiness probe doesn't match expected. \n\nExpected: %+v\n\nGot: %+v", expectedReadinessProbe, actualReadinessProbe)
 	}
+
+	expectedConfigReloaderReloadURL := "--reload-url=https://localhost:9090/-/reload"
+	reloadURLFound := false
+	for _, arg := range sset.Spec.Template.Spec.Containers[1].Args {
+		if arg == expectedConfigReloaderReloadURL {
+			reloadURLFound = true
+		}
+	}
+	if !reloadURLFound {
+		t.Fatalf("expected to find arg %s in config reloader", expectedConfigReloaderReloadURL)
+	}
+
+	expectedThanosSidecarPrometheusURL := "--prometheus.url=https://localhost:9090/"
+	prometheusURLFound := false
+	for _, arg := range sset.Spec.Template.Spec.Containers[2].Args {
+		if arg == expectedThanosSidecarPrometheusURL {
+			prometheusURLFound = true
+		}
+	}
+	if !prometheusURLFound {
+		t.Fatalf("expected to find arg %s in thanos sidecar", expectedThanosSidecarPrometheusURL)
+	}
+
+	fmt.Println(sset.Spec.Template.Spec.Containers[2].Args)
 }
 
 func TestTagAndShaAndVersion(t *testing.T) {
@@ -1113,6 +1137,62 @@ func TestThanosTracing(t *testing.T) {
 		if !containsArg {
 			t.Fatalf("Thanos sidecar is missing expected argument: %s", expectedArg)
 		}
+	}
+}
+
+func TestThanosSideCarVolumes(t *testing.T) {
+	testVolume := "test-volume"
+	testVolumeMountPath := "/prometheus/thanos-sidecar"
+	sset, err := makeStatefulSet("test", monitoringv1.Prometheus{
+		Spec: monitoringv1.PrometheusSpec{
+			Volumes: []v1.Volume{
+				{
+					Name: testVolume,
+					VolumeSource: v1.VolumeSource{
+						EmptyDir: &v1.EmptyDirVolumeSource{},
+					},
+				},
+			},
+			Thanos: &monitoringv1.ThanosSpec{
+				VolumeMounts: []v1.VolumeMount{
+					{
+						Name:      testVolume,
+						MountPath: testVolumeMountPath,
+					},
+				},
+			},
+		},
+	}, defaultTestConfig, nil, "", 0)
+
+	if err != nil {
+		t.Fatalf("Unexpected error while making StatefulSet: %v", err)
+	}
+
+	var containsVolume bool
+	for _, volume := range sset.Spec.Template.Spec.Volumes {
+		if volume.Name == testVolume {
+			containsVolume = true
+			break
+		}
+	}
+	if !containsVolume {
+		t.Fatalf("Thanos sidecar volume is missing expected volume: %s", testVolume)
+	}
+
+	var containsVolumeMount bool
+	for _, container := range sset.Spec.Template.Spec.Containers {
+		if container.Name == "thanos-sidecar" {
+			for _, volumeMount := range container.VolumeMounts {
+				if volumeMount.Name == testVolume && volumeMount.MountPath == testVolumeMountPath {
+					containsVolumeMount = true
+					break
+				}
+			}
+		}
+	}
+
+	if !containsVolumeMount {
+		t.Fatal("expected thanos sidecar volume mounts to match")
 	}
 }
 
@@ -1782,6 +1862,35 @@ func TestExpectedStatefulSetShardNames(t *testing.T) {
 	}
 }
 
+func TestExpectStatefulSetMinReadySeconds(t *testing.T) {
+	statefulSet, err := makeStatefulSet("test", monitoringv1.Prometheus{
+		Spec: monitoringv1.PrometheusSpec{},
+	}, defaultTestConfig, nil, "", 0)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	// assert defaults to zero if nil
+	if statefulSet.Spec.MinReadySeconds != 0 {
+		t.Fatalf("expected MinReadySeconds to be zero but got %d", statefulSet.Spec.MinReadySeconds)
+	}
+
+	var expect uint32 = 5
+	statefulSet, err = makeStatefulSet("test", monitoringv1.Prometheus{
+		Spec: monitoringv1.PrometheusSpec{
+			MinReadySeconds: &expect,
+		},
+	}, defaultTestConfig, nil, "", 0)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if statefulSet.Spec.MinReadySeconds != int32(expect) {
+		t.Fatalf("expected MinReadySeconds to be %d but got %d", expect, statefulSet.Spec.MinReadySeconds)
+	}
+}
+
 func TestConfigReloader(t *testing.T) {
 	expectedShardNum := 0
 	baseSet, err := makeStatefulSet("test", monitoringv1.Prometheus{}, defaultTestConfig, nil, "", int32(expectedShardNum))
@@ -1789,7 +1898,7 @@ func TestConfigReloader(t *testing.T) {
 
 	expectedArgsConfigReloader := []string{
 		"--listen-address=:8080",
-		"--reload-url=http://:9090/-/reload",
+		"--reload-url=http://localhost:9090/-/reload",
 		"--config-file=/etc/prometheus/config/prometheus.yaml.gz",
 		"--config-envsubst-file=/etc/prometheus/config_out/prometheus.env.yaml",
 	}

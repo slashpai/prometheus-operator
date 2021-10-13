@@ -659,6 +659,10 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 	var additionalContainers, operatorInitContainers []v1.Container
 
 	disableCompaction := p.Spec.DisableCompaction
+	prometheusURIScheme := "http"
+	if p.Spec.Web != nil && p.Spec.Web.TLSConfig != nil {
+		prometheusURIScheme = "https"
+	}
 	if p.Spec.Thanos != nil {
 		thanosImage, err := operator.BuildImagePath(
 			operator.StringPtrValOrDefault(p.Spec.Thanos.Image, ""),
@@ -677,7 +681,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		}
 
 		thanosArgs := []string{"sidecar",
-			fmt.Sprintf("--prometheus.url=http://%s:9090%s", c.LocalHost, path.Clean(webRoutePrefix)),
+			fmt.Sprintf("--prometheus.url=%s://%s:9090%s", prometheusURIScheme, c.LocalHost, path.Clean(webRoutePrefix)),
 			fmt.Sprintf("--grpc-address=%s:10901", bindAddress),
 			fmt.Sprintf("--http-address=%s:10902", bindAddress),
 		}
@@ -711,6 +715,13 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 				},
 			},
 			Resources: p.Spec.Thanos.Resources,
+		}
+
+		for _, thanosSideCarVM := range p.Spec.Thanos.VolumeMounts {
+			container.VolumeMounts = append(container.VolumeMounts, v1.VolumeMount{
+				Name:      thanosSideCarVM.Name,
+				MountPath: thanosSideCarVM.MountPath,
+			})
 		}
 
 		if p.Spec.Thanos.ObjectStorageConfig != nil || p.Spec.Thanos.ObjectStorageConfigFile != nil {
@@ -802,6 +813,11 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		}
 	}
 
+	var minReadySeconds int32
+	if p.Spec.MinReadySeconds != nil {
+		minReadySeconds = int32(*p.Spec.MinReadySeconds)
+	}
+
 	operatorInitContainers = append(operatorInitContainers,
 		operator.CreateConfigReloader(
 			"init-config-reloader",
@@ -837,7 +853,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 			"config-reloader",
 			operator.ReloaderResources(c.ReloaderConfig),
 			operator.ReloaderURL(url.URL{
-				Scheme: "http",
+				Scheme: prometheusURIScheme,
 				Host:   c.LocalHost + ":9090",
 				Path:   path.Clean(webRoutePrefix + "/-/reload"),
 			}),
@@ -865,6 +881,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
 			Type: appsv1.RollingUpdateStatefulSetStrategyType,
 		},
+		MinReadySeconds: minReadySeconds,
 		Selector: &metav1.LabelSelector{
 			MatchLabels: finalSelectorLabels,
 		},

@@ -228,6 +228,7 @@ AlertmanagerSpec is a specification of the desired behavior of the Alertmanager 
 | forceEnableClusterMode | ForceEnableClusterMode ensures Alertmanager does not deactivate the cluster mode when running with a single replica. Use case is e.g. spanning an Alertmanager cluster across Kubernetes clusters with a single replica in each. | bool | false |
 | alertmanagerConfigSelector | AlertmanagerConfigs to be selected for to merge and configure Alertmanager with. | *[metav1.LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.17/#labelselector-v1-meta) | false |
 | alertmanagerConfigNamespaceSelector | Namespaces to be selected for AlertmanagerConfig discovery. If nil, only check own namespace. | *[metav1.LabelSelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.17/#labelselector-v1-meta) | false |
+| minReadySeconds | Minimum number of seconds for which a newly created pod should be ready without any of its container crashing for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready) This is an alpha field and requires enabling StatefulSetMinReadySeconds feature gate. | *uint32 | false |
 
 [Back to TOC](#table-of-contents)
 
@@ -532,6 +533,7 @@ ProbeSpec contains specification parameters for a Probe.
 | bearerTokenSecret | Secret to mount to read bearer token for scraping targets. The secret needs to be in the same namespace as the probe and accessible by the Prometheus Operator. | [v1.SecretKeySelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.17/#secretkeyselector-v1-core) | false |
 | basicAuth | BasicAuth allow an endpoint to authenticate over basic authentication. More info: https://prometheus.io/docs/operating/configuration/#endpoint | *[BasicAuth](#basicauth) | false |
 | oauth2 | OAuth2 for the URL. Only valid in Prometheus versions 2.27.0 and newer. | *[OAuth2](#oauth2) | false |
+| metricRelabelings | MetricRelabelConfigs to apply to samples before ingestion. | []*[RelabelConfig](#relabelconfig) | false |
 | authorization | Authorization section for this endpoint | *[SafeAuthorization](#safeauthorization) | false |
 | sampleLimit | SampleLimit defines per-scrape limit on number of scraped samples that will be accepted. | uint64 | false |
 | targetLimit | TargetLimit defines a limit on the number of scraped targets that will be accepted. | uint64 | false |
@@ -780,6 +782,8 @@ PrometheusSpec is a specification of the desired behavior of the Prometheus clus
 | enforcedLabelLimit | Per-scrape limit on number of labels that will be accepted for a sample. If more than this number of labels are present post metric-relabeling, the entire scrape will be treated as failed. 0 means no limit. Only valid in Prometheus versions 2.27.0 and newer. | *uint64 | false |
 | enforcedLabelNameLengthLimit | Per-scrape limit on length of labels name that will be accepted for a sample. If a label name is longer than this number post metric-relabeling, the entire scrape will be treated as failed. 0 means no limit. Only valid in Prometheus versions 2.27.0 and newer. | *uint64 | false |
 | enforcedLabelValueLengthLimit | Per-scrape limit on length of labels value that will be accepted for a sample. If a label value is longer than this number post metric-relabeling, the entire scrape will be treated as failed. 0 means no limit. Only valid in Prometheus versions 2.27.0 and newer. | *uint64 | false |
+| enforcedBodySizeLimit | EnforcedBodySizeLimit defines the maximum size of uncompressed response body that will be accepted by Prometheus. Targets responding with a body larger than this many bytes will cause the scrape to fail. Example: 100MB. If defined, the limit will apply to all service/pod monitors and probes. This is an experimental feature, this behaviour could change or be removed in the future. Only valid in Prometheus versions 2.28.0 and newer. | string | false |
+| minReadySeconds | Minimum number of seconds for which a newly created pod should be ready without any of its container crashing for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready) This is an alpha field and requires enabling StatefulSetMinReadySeconds feature gate. | *uint32 | false |
 
 [Back to TOC](#table-of-contents)
 
@@ -841,7 +845,7 @@ QueueConfig allows the tuning of remote_write queue_config parameters. This obje
 RelabelConfig allows dynamic rewriting of the label set, being applied to samples before ingestion. It defines `<metric_relabel_configs>`-section of Prometheus configuration. More info: https://prometheus.io/docs/prometheus/latest/configuration/configuration/#metric_relabel_configs
 
 
-<em>appears in: [Endpoint](#endpoint), [PodMetricsEndpoint](#podmetricsendpoint), [ProbeTargetIngress](#probetargetingress), [ProbeTargetStaticConfig](#probetargetstaticconfig), [RemoteWriteSpec](#remotewritespec)</em>
+<em>appears in: [Endpoint](#endpoint), [PodMetricsEndpoint](#podmetricsendpoint), [ProbeSpec](#probespec), [ProbeTargetIngress](#probetargetingress), [ProbeTargetStaticConfig](#probetargetstaticconfig), [RemoteWriteSpec](#remotewritespec)</em>
 
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
@@ -970,7 +974,7 @@ RuleGroup is a list of sequentially evaluated recording and alerting rules. Note
 
 ## SafeAuthorization
 
-SafeAuthorization specifies a subset of the Authorization struct, that is safe for use in Endpoints (no CrendetialsFile field)
+SafeAuthorization specifies a subset of the Authorization struct, that is safe for use in Endpoints (no CredentialsFile field)
 
 
 <em>appears in: [AlertmanagerEndpoints](#alertmanagerendpoints), [Authorization](#authorization), [Endpoint](#endpoint), [PodMetricsEndpoint](#podmetricsendpoint), [ProbeSpec](#probespec)</em>
@@ -1121,6 +1125,7 @@ ThanosSpec defines parameters for a Prometheus server within a Thanos deployment
 | logFormat | LogFormat for Thanos sidecar to be configured with. | string | false |
 | minTime | MinTime for Thanos sidecar to be configured with. Option can be a constant time in RFC3339 format or time duration relative to current time, such as -1d or 2h45m. Valid duration units are ms, s, m, h, d, w, y. | string | false |
 | readyTimeout | ReadyTimeout is the maximum time Thanos sidecar will wait for Prometheus to start. Eg 10m | string | false |
+| volumeMounts | VolumeMounts allows configuration of additional VolumeMounts on the output StatefulSet definition. VolumeMounts specified will be appended to other VolumeMounts in the thanos-sidecar container. | []v1.VolumeMount | false |
 
 [Back to TOC](#table-of-contents)
 
@@ -1234,6 +1239,7 @@ ThanosRulerSpec is a specification of the desired behavior of the ThanosRuler. M
 | routePrefix | The route prefix ThanosRuler registers HTTP handlers for. This allows thanos UI to be served on a sub-path. | string | false |
 | grpcServerTlsConfig | GRPCServerTLSConfig configures the gRPC server from which Thanos Querier reads recorded rule data. Note: Currently only the CAFile, CertFile, and KeyFile fields are supported. Maps to the '--grpc-server-tls-*' CLI args. | *[TLSConfig](#tlsconfig) | false |
 | alertQueryUrl | The external Query URL the Thanos Ruler will set in the 'Source' field of all alerts. Maps to the '--alert.query-url' CLI arg. | string | false |
+| minReadySeconds | Minimum number of seconds for which a newly created pod should be ready without any of its container crashing for it to be considered available. Defaults to 0 (pod will be considered available as soon as it is ready) This is an alpha field and requires enabling StatefulSetMinReadySeconds feature gate. | *uint32 | false |
 
 [Back to TOC](#table-of-contents)
 
@@ -1329,7 +1335,8 @@ HTTPConfig defines a client HTTP configuration. See https://prometheus.io/docs/a
 
 | Field | Description | Scheme | Required |
 | ----- | ----------- | ------ | -------- |
-| basicAuth | BasicAuth for the client. | *monitoringv1.BasicAuth | false |
+| authorization | Authorization header configuration for the client. This is mutually exclusive with BasicAuth and is only available starting from Alertmanager v0.22+. | *monitoringv1.SafeAuthorization | false |
+| basicAuth | BasicAuth for the client. This is mutually exclusive with Authorization. If both are defined, BasicAuth takes precedence. | *monitoringv1.BasicAuth | false |
 | bearerTokenSecret | The secret's key that contains the bearer token to be used by the client for authentication. The secret needs to be in the same namespace as the AlertmanagerConfig object and accessible by the Prometheus Operator. | *[v1.SecretKeySelector](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.17/#secretkeyselector-v1-core) | false |
 | tlsConfig | TLS configuration for the client. | *monitoringv1.SafeTLSConfig | false |
 | proxyURL | Optional proxy URL. | string | false |
