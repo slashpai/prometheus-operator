@@ -49,6 +49,13 @@ func skipThanosRulerTests(t *testing.T) {
 	}
 }
 
+// feature gated tests need to be explicitly included
+func runFeatureGatedTests(t *testing.T) {
+	if os.Getenv("FEATURE_GATED_TESTS") != "include" {
+		t.Skip("Skipping Feature Gated tests")
+	}
+}
+
 func TestMain(m *testing.M) {
 	kubeconfig := flag.String(
 		"kubeconfig",
@@ -151,6 +158,8 @@ func testAllNSAlertmanager(t *testing.T) {
 		"AMAlertmanagerConfigCRD":         testAlertmanagerConfigCRD,
 		"AMUserDefinedAlertmanagerConfig": testUserDefinedAlertmanagerConfig,
 		"AMPreserveUserAddedMetadata":     testAMPreserveUserAddedMetadata,
+		"AMRollbackManualChanges":         testAMRollbackManualChanges,
+		"AMMinReadySeconds":               testAlertManagerMinReadySeconds,
 	}
 
 	for name, f := range testFuncs {
@@ -196,6 +205,8 @@ func testAllNSPrometheus(t *testing.T) {
 		"PromSharedResourcesReconciliation":      testPromSharedResourcesReconciliation,
 		"PromPreserveUserAddedMetadata":          testPromPreserveUserAddedMetadata,
 		"PromWebTLS":                             testPromWebTLS,
+		"PromMinReadySeconds":                    testPromMinReadySeconds,
+		"PromEnforcedNamespaceLabel":             testPromEnforcedNamespaceLabel,
 	}
 
 	for name, f := range testFuncs {
@@ -209,6 +220,7 @@ func testAllNSThanosRuler(t *testing.T) {
 		"ThanosRulerCreateDeleteCluster":                testThanosRulerCreateDeleteCluster,
 		"ThanosRulerPrometheusRuleInDifferentNamespace": testThanosRulerPrometheusRuleInDifferentNamespace,
 		"ThanosRulerPreserveUserAddedMetadata":          testTRPreserveUserAddedMetadata,
+		"ThanosRulerMinReadySeconds":                    testTRMinReadySeconds,
 	}
 	for name, f := range testFuncs {
 		t.Run(name, f)

@@ -20,14 +20,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kylelemons/godebug/pretty"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
 	"github.com/stretchr/testify/require"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/kylelemons/godebug/pretty"
 )
 
 var (
@@ -1014,5 +1013,32 @@ func TestClusterListenAddressForMultiReplica(t *testing.T) {
 
 	if !containsClusterListenAddress {
 		t.Fatal("expected stateful set to contain arg '--cluster.listen-address=[$(POD_IP)]:9094'")
+	}
+}
+
+func TestExpectStatefulSetMinReadySeconds(t *testing.T) {
+	a := monitoringv1.Alertmanager{}
+	replicas := int32(3)
+	a.Spec.Version = operator.DefaultAlertmanagerVersion
+	a.Spec.Replicas = &replicas
+
+	// assert defaults to zero if nil
+	statefulSet, err := makeStatefulSetSpec(&a, defaultTestConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statefulSet.MinReadySeconds != 0 {
+		t.Fatalf("expected MinReadySeconds to be zero but got %d", statefulSet.MinReadySeconds)
+	}
+
+	// assert set correctly if not nil
+	var expect uint32 = 5
+	a.Spec.MinReadySeconds = &expect
+	statefulSet, err = makeStatefulSetSpec(&a, defaultTestConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statefulSet.MinReadySeconds != int32(expect) {
+		t.Fatalf("expected MinReadySeconds to be %d but got %d", expect, statefulSet.MinReadySeconds)
 	}
 }
