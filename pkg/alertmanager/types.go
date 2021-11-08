@@ -69,6 +69,7 @@ type route struct {
 	GroupByStr     []string          `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 	Match          map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
 	MatchRE        map[string]string `yaml:"match_re,omitempty" json:"match_re,omitempty"`
+	Matchers       []string          `yaml:"matchers,omitempty" json:"matchers,omitempty"`
 	Continue       bool              `yaml:"continue,omitempty" json:"continue,omitempty"`
 	Routes         []*route          `yaml:"routes,omitempty" json:"routes,omitempty"`
 	GroupWait      string            `yaml:"group_wait,omitempty" json:"group_wait,omitempty"`
@@ -77,11 +78,13 @@ type route struct {
 }
 
 type inhibitRule struct {
-	TargetMatch   map[string]string `yaml:"target_match,omitempty" json:"target_match,omitempty"`
-	TargetMatchRE map[string]string `yaml:"target_match_re,omitempty" json:"target_match_re,omitempty"`
-	SourceMatch   map[string]string `yaml:"source_match,omitempty" json:"source_match,omitempty"`
-	SourceMatchRE map[string]string `yaml:"source_match_re,omitempty" json:"source_match_re,omitempty"`
-	Equal         []string          `yaml:"equal,omitempty" json:"equal,omitempty"`
+	TargetMatch    map[string]string `yaml:"target_match,omitempty" json:"target_match,omitempty"`
+	TargetMatchRE  map[string]string `yaml:"target_match_re,omitempty" json:"target_match_re,omitempty"`
+	TargetMatchers []string          `yaml:"target_matchers,omitempty" json:"target_matchers,omitempty"`
+	SourceMatch    map[string]string `yaml:"source_match,omitempty" json:"source_match,omitempty"`
+	SourceMatchRE  map[string]string `yaml:"source_match_re,omitempty" json:"source_match_re,omitempty"`
+	SourceMatchers []string          `yaml:"source_matchers,omitempty" json:"source_matchers,omitempty"`
+	Equal          []string          `yaml:"equal,omitempty" json:"equal,omitempty"`
 }
 
 type receiver struct {

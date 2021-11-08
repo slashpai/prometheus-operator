@@ -1,4 +1,22 @@
-## 0.51.2 / 2021-&0-04
+## 0.52.0 / 2021-11-03
+
+* [CHANGE] Extend sharding capabilities to `additionalScrapeConfigs`. #4324
+* [CHANGE] Remove `app` label from Prometheus, Alertmanager and Thanos Ruler statefulsets/pods. #4350
+* [FEATURE] Add `alertRelabelConfigs` field to the Thanos Ruler CRD for configuring Prometheus alert relabeling features. #4303
+* [FEATURE] Add support for updated matching syntax in Alertmanager's raw config for `inhibit_rules` and `route`. #4307, #4309
+* [FEATURE] Add validating webhook for AlertManagerConfig. #4338
+* [FEATURE] Adds support for Sigv4 when configuring RemoteWrite. #3994
+* [ENHANCEMENT] Add "generic ephemeral storage" as a data storage option for Alertmanager, Prometheus and Thanos Ruler. #4326
+* [ENHANCEMENT] Improve docs and error message for "smarthost" field. #4299
+* [ENHANCEMENT] Add alerts for config reloader sidecars. #4294
+* [ENHANCEMENT] Add validations for duration and size fields for Prometheus, Alertmanager, and Thanos Ruler resources #4308, #4352
+* [ENHANCEMENT] Add s390x support to docker images. #4351
+* [ENHANCEMENT] Only load alertmanager configuration when writing configration. #4333
+* [BUGFIX] Fix `matchLabels` selector to have empty label values in ServiceMonitor, PodMonitor, and Probe. #4327
+* [BUGFIX] Prevent rule file name collision. #4347
+* [BUGFIX] Update native kubernetes fields used in prometheus-operator CRDs. #4221
+
+## 0.51.2 / 2021-10-04
 
 * [BUGFIX] Validated the value of the `EnforcedBodySizeLimit` field to avoid Prometheus crash. #4285
 
@@ -6,7 +24,7 @@
 
 No change since v0.51.0.
 
-_The CI automation failed to build the v0.51.0 images so we had to create a new patch release._
+*The CI automation failed to build the v0.51.0 images so we had to create a new patch release.*
 
 ## 0.51.0 / 2021-09-24
 
@@ -185,11 +203,12 @@ future.
 
 ## 0.42.1 / 2020-09-21
 
-* [BUGFIX] Bump client-go to fix watch bug 
+* [BUGFIX] Bump client-go to fix watch bug
 
 ## 0.42.0 / 2020-09-09
 
-The Prometheus Operator now lives in its own independent GitHub organization.  
+The Prometheus Operator now lives in its own independent GitHub organization.
+
 We have also added a governance (#3398).
 
 * [FEATURE] Move API types out into their own module (#3395)
@@ -234,12 +253,12 @@ We have also added a governance (#3398).
 
 * [CHANGE] Update dependencies to prometheus 2.18 (#3231)
 * [CHANGE] Add support for new prometheus versions (v2.18 & v2.19) (#3284)
-* [CHANGE] bump Alertmanager default version to v0.21.0 (#3286) 
+* [CHANGE] bump Alertmanager default version to v0.21.0 (#3286)
 * [FEATURE] Automatically disable high availability mode for 1 replica alertmanager (#3233)
 * [FEATURE] thanos-sidecar: Add minTime arg (#3253)
-* [FEATURE] Add scrapeTimeout as global configurable parameter (#3250) 
-* [FEATURE] Add EnforcedSampleLimit which enforces a global sample limit (#3276) 
-* [FEATURE] add ability to exclude rules from namespace label enforcement (#3207) 
+* [FEATURE] Add scrapeTimeout as global configurable parameter (#3250)
+* [FEATURE] Add EnforcedSampleLimit which enforces a global sample limit (#3276)
+* [FEATURE] add ability to exclude rules from namespace label enforcement (#3207)
 * [BUGFIX] thanos sidecar: log flags double definition (#3242)
 * [BUGFIX] Mutate rule labels, annotations to strings (#3230)
 
@@ -517,7 +536,7 @@ and accepts and comma-separated list of namespaces as a string.
 ## 0.22.0 / 2018-07-09
 
 * [FEATURE] Allow setting volume name via volumetemplateclaimtemplate in prom and alertmanager (#1538)
-* [FEATURE] Allow setting custom tags of container images (#1584) 
+* [FEATURE] Allow setting custom tags of container images (#1584)
 * [ENHANCEMENT] Update default Thanos to v0.1.0-rc.2 (#1585)
 * [ENHANCEMENT] Split rule config map mounted into Prometheus if it exceeds Kubernetes config map limit (#1562)
 * [BUGFIX] Mount Prometheus data volume into Thanos sidecar & pass correct path to Thanos sidecar (#1583)

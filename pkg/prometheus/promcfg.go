@@ -16,7 +16,6 @@ package prometheus
 
 import (
 	"fmt"
-	"github.com/alecthomas/units"
 	"path"
 	"regexp"
 	"sort"
@@ -219,18 +218,85 @@ func buildExternalLabels(p *v1.Prometheus) yaml.MapSlice {
 // validateConfigInputs runs extra validation on the Prometheus fields which can't be done at the CRD schema validation level.
 func validateConfigInputs(p *v1.Prometheus) error {
 	if p.Spec.EnforcedBodySizeLimit != "" {
-		if err := validateBodySizeLimit(p.Spec.EnforcedBodySizeLimit); err != nil {
-			return err
+		if err := operator.ValidateSizeField(p.Spec.EnforcedBodySizeLimit); err != nil {
+			return errors.Wrap(err, "invalid enforcedBodySizeLimit value specified")
 		}
 	}
-	return nil
-}
 
-func validateBodySizeLimit(enforcedLimit string) error {
-	// To validate if given value is parsable for the acceptable body_size_limit values
-	if _, err := units.ParseBase2Bytes(enforcedLimit); err != nil {
-		return errors.Wrap(err, "invalid enforcedBodySizeLimit value specified")
+	if p.Spec.RetentionSize != "" {
+		if err := operator.ValidateSizeField(p.Spec.RetentionSize); err != nil {
+			return errors.Wrap(err, "invalid retentionSize value specified")
+		}
 	}
+
+	if p.Spec.Retention != "" {
+		if err := operator.ValidateDurationField(p.Spec.Retention); err != nil {
+			return errors.Wrap(err, "invalid retention value specified")
+		}
+	}
+
+	if p.Spec.ScrapeInterval != "" {
+		if err := operator.ValidateDurationField(p.Spec.ScrapeInterval); err != nil {
+			return errors.Wrap(err, "invalid scrapeInterval value specified")
+		}
+	}
+
+	if p.Spec.ScrapeTimeout != "" {
+		if err := operator.ValidateDurationField(p.Spec.ScrapeTimeout); err != nil {
+			return errors.Wrap(err, "invalid scrapeTimeout value specified")
+		}
+	}
+
+	if p.Spec.EvaluationInterval != "" {
+		if err := operator.ValidateDurationField(p.Spec.EvaluationInterval); err != nil {
+			return errors.Wrap(err, "invalid evaluationInterval value specified")
+		}
+	}
+
+	if p.Spec.Thanos != nil && p.Spec.Thanos.ReadyTimeout != "" {
+		if err := operator.ValidateDurationField(p.Spec.Thanos.ReadyTimeout); err != nil {
+			return errors.Wrap(err, "invalid thanos.readyTimeout value specified")
+		}
+	}
+
+	if p.Spec.Query != nil && p.Spec.Query.Timeout != nil && *p.Spec.Query.Timeout != "" {
+		if err := operator.ValidateDurationField(*p.Spec.Query.Timeout); err != nil {
+			return errors.Wrap(err, "invalid query.timeout value specified")
+		}
+	}
+
+	for i, rr := range p.Spec.RemoteRead {
+		if rr.RemoteTimeout != "" {
+			if err := operator.ValidateDurationField(rr.RemoteTimeout); err != nil {
+				return errors.Wrapf(err, "invalid remoteRead[%d].remoteTimeout value specified", i)
+			}
+		}
+	}
+
+	for i, rw := range p.Spec.RemoteWrite {
+		if rw.RemoteTimeout != "" {
+			if err := operator.ValidateDurationField(rw.RemoteTimeout); err != nil {
+				return errors.Wrapf(err, "invalid remoteWrite[%d].remoteTimeout value specified", i)
+			}
+		}
+
+		if rw.MetadataConfig != nil && rw.MetadataConfig.SendInterval != "" {
+			if err := operator.ValidateDurationField(rw.MetadataConfig.SendInterval); err != nil {
+				return errors.Wrapf(err, "invalid remoteWrite[%d].metadataConfig.sendInterval value specified", i)
+			}
+		}
+	}
+
+	if p.Spec.Alerting != nil {
+		for i, ap := range p.Spec.Alerting.Alertmanagers {
+			if ap.Timeout != nil && *ap.Timeout != "" {
+				if err := operator.ValidateDurationField(*ap.Timeout); err != nil {
+					return errors.Wrapf(err, "invalid alertmanagers[%d].timeout value specified", i)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -411,15 +477,15 @@ func (cg *ConfigGenerator) GenerateConfig(
 	var alertmanagerConfigs []yaml.MapSlice
 	alertmanagerConfigs = cg.generateAlertmanagerConfig(version, p.Spec.Alerting, apiserverConfig, store)
 
-	var additionalScrapeConfigsYaml []yaml.MapSlice
-	err = yaml.Unmarshal([]byte(additionalScrapeConfigs), &additionalScrapeConfigsYaml)
+	var addlScrapeConfigs []yaml.MapSlice
+	addlScrapeConfigs, err = cg.generateAdditionalScrapeConfigs(additionalScrapeConfigs, shards)
 	if err != nil {
-		return nil, errors.Wrap(err, "unmarshalling additional scrape configs failed")
+		return nil, errors.Wrap(err, "generate additional scrape configs")
 	}
 
 	cfg = append(cfg, yaml.MapItem{
 		Key:   "scrape_configs",
-		Value: append(scrapeConfigs, additionalScrapeConfigsYaml...),
+		Value: append(scrapeConfigs, addlScrapeConfigs...),
 	})
 
 	var additionalAlertManagerConfigsYaml []yaml.MapSlice
@@ -616,8 +682,8 @@ func (cg *ConfigGenerator) generatePodMonitorConfig(
 	for _, k := range labelKeys {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(k)}},
-			{Key: "regex", Value: m.Spec.Selector.MatchLabels[k]},
+			{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(k), "__meta_kubernetes_pod_labelpresent_" + sanitizeLabelName(k)}},
+			{Key: "regex", Value: fmt.Sprintf("%s;true", m.Spec.Selector.MatchLabels[k])},
 		})
 	}
 	// Set based label matching. We have to map the valid relations
@@ -627,14 +693,14 @@ func (cg *ConfigGenerator) generatePodMonitorConfig(
 		case metav1.LabelSelectorOpIn:
 			relabelings = append(relabelings, yaml.MapSlice{
 				{Key: "action", Value: "keep"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(exp.Key)}},
-				{Key: "regex", Value: strings.Join(exp.Values, "|")},
+				{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(exp.Key), "__meta_kubernetes_pod_labelpresent_" + sanitizeLabelName(exp.Key)}},
+				{Key: "regex", Value: fmt.Sprintf("%s;true", strings.Join(exp.Values, "|"))},
 			})
 		case metav1.LabelSelectorOpNotIn:
 			relabelings = append(relabelings, yaml.MapSlice{
 				{Key: "action", Value: "drop"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(exp.Key)}},
-				{Key: "regex", Value: strings.Join(exp.Values, "|")},
+				{Key: "source_labels", Value: []string{"__meta_kubernetes_pod_label_" + sanitizeLabelName(exp.Key), "__meta_kubernetes_pod_labelpresent_" + sanitizeLabelName(exp.Key)}},
+				{Key: "regex", Value: fmt.Sprintf("%s;true", strings.Join(exp.Values, "|"))},
 			})
 		case metav1.LabelSelectorOpExists:
 			relabelings = append(relabelings, yaml.MapSlice{
@@ -901,8 +967,8 @@ func (cg *ConfigGenerator) generateProbeConfig(
 		for _, k := range labelKeys {
 			relabelings = append(relabelings, yaml.MapSlice{
 				{Key: "action", Value: "keep"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_ingress_label_" + sanitizeLabelName(k)}},
-				{Key: "regex", Value: m.Spec.Targets.Ingress.Selector.MatchLabels[k]},
+				{Key: "source_labels", Value: []string{"__meta_kubernetes_ingress_label_" + sanitizeLabelName(k), "__meta_kubernetes_ingress_labelpresent_" + sanitizeLabelName(k)}},
+				{Key: "regex", Value: fmt.Sprintf("%s;true", m.Spec.Targets.Ingress.Selector.MatchLabels[k])},
 			})
 		}
 
@@ -913,8 +979,8 @@ func (cg *ConfigGenerator) generateProbeConfig(
 			case metav1.LabelSelectorOpIn:
 				relabelings = append(relabelings, yaml.MapSlice{
 					{Key: "action", Value: "keep"},
-					{Key: "source_labels", Value: []string{"__meta_kubernetes_ingress_label_" + sanitizeLabelName(exp.Key)}},
-					{Key: "regex", Value: strings.Join(exp.Values, "|")},
+					{Key: "source_labels", Value: []string{"__meta_kubernetes_ingress_label_" + sanitizeLabelName(exp.Key), "__meta_kubernetes_ingress_labelpresent_" + sanitizeLabelName(exp.Key)}},
+					{Key: "regex", Value: fmt.Sprintf("%s;true", strings.Join(exp.Values, "|"))},
 				})
 			case metav1.LabelSelectorOpNotIn:
 				relabelings = append(relabelings, yaml.MapSlice{
@@ -1115,8 +1181,8 @@ func (cg *ConfigGenerator) generateServiceMonitorConfig(
 	for _, k := range labelKeys {
 		relabelings = append(relabelings, yaml.MapSlice{
 			{Key: "action", Value: "keep"},
-			{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(k)}},
-			{Key: "regex", Value: m.Spec.Selector.MatchLabels[k]},
+			{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(k), "__meta_kubernetes_service_labelpresent_" + sanitizeLabelName(k)}},
+			{Key: "regex", Value: fmt.Sprintf("%s;true", m.Spec.Selector.MatchLabels[k])},
 		})
 	}
 	// Set based label matching. We have to map the valid relations
@@ -1126,14 +1192,14 @@ func (cg *ConfigGenerator) generateServiceMonitorConfig(
 		case metav1.LabelSelectorOpIn:
 			relabelings = append(relabelings, yaml.MapSlice{
 				{Key: "action", Value: "keep"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(exp.Key)}},
-				{Key: "regex", Value: strings.Join(exp.Values, "|")},
+				{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(exp.Key), "__meta_kubernetes_service_labelpresent_" + sanitizeLabelName(exp.Key)}},
+				{Key: "regex", Value: fmt.Sprintf("%s;true", strings.Join(exp.Values, "|"))},
 			})
 		case metav1.LabelSelectorOpNotIn:
 			relabelings = append(relabelings, yaml.MapSlice{
 				{Key: "action", Value: "drop"},
-				{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(exp.Key)}},
-				{Key: "regex", Value: strings.Join(exp.Values, "|")},
+				{Key: "source_labels", Value: []string{"__meta_kubernetes_service_label_" + sanitizeLabelName(exp.Key), "__meta_kubernetes_service_labelpresent_" + sanitizeLabelName(exp.Key)}},
+				{Key: "regex", Value: fmt.Sprintf("%s;true", strings.Join(exp.Values, "|"))},
 			})
 		case metav1.LabelSelectorOpExists:
 			relabelings = append(relabelings, yaml.MapSlice{
@@ -1484,6 +1550,49 @@ func (cg *ConfigGenerator) generateAlertmanagerConfig(version semver.Version, al
 	return alertmanagerConfigs
 }
 
+func (cg *ConfigGenerator) generateAdditionalScrapeConfigs(
+	additionalScrapeConfigs []byte,
+	shards int32,
+) ([]yaml.MapSlice, error) {
+	var additionalScrapeConfigsYaml []yaml.MapSlice
+	err := yaml.Unmarshal([]byte(additionalScrapeConfigs), &additionalScrapeConfigsYaml)
+	if err != nil {
+		return nil, errors.Wrap(err, "unmarshalling additional scrape configs failed")
+	}
+	if shards == 1 {
+		return additionalScrapeConfigsYaml, nil
+	}
+
+	var addlScrapeConfigs []yaml.MapSlice
+	for _, mapSlice := range additionalScrapeConfigsYaml {
+		var addlScrapeConfig yaml.MapSlice
+		var relabelings []yaml.MapSlice
+		var otherConfigItems []yaml.MapItem
+		for _, mapItem := range mapSlice {
+			if mapItem.Key != "relabel_configs" {
+				otherConfigItems = append(otherConfigItems, mapItem)
+				continue
+			}
+			values, ok := mapItem.Value.([]interface{})
+			if !ok {
+				return nil, errors.Wrap(err, "error parsing relabel configs")
+			}
+			for _, value := range values {
+				relabeling, ok := value.(yaml.MapSlice)
+				if !ok {
+					return nil, errors.Wrap(err, "error parsing relabel config")
+				}
+				relabelings = append(relabelings, relabeling)
+			}
+		}
+		relabelings = generateAddressShardingRelabelingRules(relabelings, shards)
+		addlScrapeConfig = append(addlScrapeConfig, otherConfigItems...)
+		addlScrapeConfig = append(addlScrapeConfig, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
+		addlScrapeConfigs = append(addlScrapeConfigs, addlScrapeConfig)
+	}
+	return addlScrapeConfigs, nil
+}
+
 func (cg *ConfigGenerator) generateRemoteReadConfig(
 	version semver.Version,
 	p *v1.Prometheus,
@@ -1604,7 +1713,6 @@ func (cg *ConfigGenerator) generateRemoteWriteConfig(
 			{Key: "url", Value: spec.URL},
 			{Key: "remote_timeout", Value: spec.RemoteTimeout},
 		}
-
 		if len(spec.Headers) > 0 && version.GTE(semver.MustParse("2.25.0")) {
 			cfg = append(cfg, yaml.MapItem{Key: "headers", Value: stringMapToMapSlice(spec.Headers)})
 		}
@@ -1683,6 +1791,27 @@ func (cg *ConfigGenerator) generateRemoteWriteConfig(
 
 		if spec.ProxyURL != "" {
 			cfg = append(cfg, yaml.MapItem{Key: "proxy_url", Value: spec.ProxyURL})
+		}
+
+		if spec.Sigv4 != nil && version.GTE(semver.MustParse("2.26.0")) {
+			sigV4 := yaml.MapSlice{}
+			if spec.Sigv4.Region != "" {
+				sigV4 = append(sigV4, yaml.MapItem{Key: "region", Value: spec.Sigv4.Region})
+			}
+			key := fmt.Sprintf("remoteWrite/%d", i)
+			if store.SigV4Assets[key].AccessKeyID != "" {
+				sigV4 = append(sigV4, yaml.MapItem{Key: "access_key", Value: store.SigV4Assets[key].AccessKeyID})
+			}
+			if store.SigV4Assets[key].SecretKeyID != "" {
+				sigV4 = append(sigV4, yaml.MapItem{Key: "secret_key", Value: store.SigV4Assets[key].SecretKeyID})
+			}
+			if spec.Sigv4.Profile != "" {
+				sigV4 = append(sigV4, yaml.MapItem{Key: "profile", Value: spec.Sigv4.Profile})
+			}
+			if spec.Sigv4.RoleArn != "" {
+				sigV4 = append(sigV4, yaml.MapItem{Key: "role_arn", Value: spec.Sigv4.RoleArn})
+			}
+			cfg = append(cfg, yaml.MapItem{Key: "sigv4", Value: sigV4})
 		}
 
 		if spec.QueueConfig != nil {
