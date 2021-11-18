@@ -130,6 +130,14 @@ func makeStatefulSet(am *monitoringv1.Alertmanager, config Config, inputHash str
 				EmptyDir: emptyDir,
 			},
 		})
+	} else if storageSpec.Ephemeral != nil {
+		ephemeral := storageSpec.Ephemeral
+		statefulset.Spec.Template.Spec.Volumes = append(statefulset.Spec.Template.Spec.Volumes, v1.Volume{
+			Name: volumeName(am.Name),
+			VolumeSource: v1.VolumeSource{
+				Ephemeral: ephemeral,
+			},
+		})
 	} else {
 		pvcTemplate := operator.MakeVolumeClaimTemplate(storageSpec.VolumeClaimTemplate)
 		if pvcTemplate.Name == "" {
@@ -314,8 +322,6 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config) (*appsv1.S
 		"app.kubernetes.io/version": version.String(),
 	}
 	podSelectorLabels := map[string]string{
-		// TODO(paulfantom): remove `app` label after 0.50 release
-		"app":                          "alertmanager",
 		"app.kubernetes.io/name":       "alertmanager",
 		"app.kubernetes.io/managed-by": "prometheus-operator",
 		"app.kubernetes.io/instance":   a.Name,

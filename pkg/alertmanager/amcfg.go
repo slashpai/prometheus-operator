@@ -30,6 +30,7 @@ import (
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/assets"
+	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
 	"github.com/prometheus/alertmanager/config"
 	"gopkg.in/yaml.v2"
 	"k8s.io/apimachinery/pkg/types"
@@ -72,6 +73,33 @@ func newConfigGenerator(logger log.Logger, amVersion semver.Version, store *asse
 		store:     store,
 	}
 	return cg
+}
+
+// validateConfigInputs runs extra validation on the AlertManager fields which can't be done at the CRD schema validation level.
+func validateConfigInputs(am *monitoringv1.Alertmanager) error {
+	if am.Spec.Retention != "" {
+		if err := operator.ValidateDurationField(am.Spec.Retention); err != nil {
+			return errors.Wrap(err, "invalid retention value specified")
+		}
+	}
+	if am.Spec.ClusterGossipInterval != "" {
+		if err := operator.ValidateDurationField(am.Spec.ClusterGossipInterval); err != nil {
+			return errors.Wrap(err, "invalid clusterGossipInterval value specified")
+		}
+	}
+
+	if am.Spec.ClusterPushpullInterval != "" {
+		if err := operator.ValidateDurationField(am.Spec.ClusterPushpullInterval); err != nil {
+			return errors.Wrap(err, "invalid clusterPushpullInterval value specified")
+		}
+	}
+
+	if am.Spec.ClusterPeerTimeout != "" {
+		if err := operator.ValidateDurationField(am.Spec.ClusterPeerTimeout); err != nil {
+			return errors.Wrap(err, "invalid clusterPeerTimeout value specified")
+		}
+	}
+	return nil
 }
 
 func (cg *configGenerator) generateConfig(
@@ -125,7 +153,9 @@ func (cg *configGenerator) generateConfig(
 	baseConfig.Route.Routes = append(subRoutes, baseConfig.Route.Routes...)
 
 	generatedConf := &baseConfig
-	generatedConf.sanitize(cg.amVersion, cg.logger)
+	if err := generatedConf.sanitize(cg.amVersion, cg.logger); err != nil {
+		return nil, err
+	}
 	return yaml.Marshal(generatedConf)
 }
 
@@ -190,6 +220,7 @@ func convertRoute(in *monitoringv1alpha1.Route, crKey types.NamespacedName, firs
 	}
 }
 
+// convertReceiver converts a monitoringv1alpha1.Receiver to an alertmanager.receiver
 func (cg *configGenerator) convertReceiver(ctx context.Context, in *monitoringv1alpha1.Receiver, crKey types.NamespacedName) (*receiver, error) {
 	var pagerdutyConfigs []*pagerdutyConfig
 
@@ -566,17 +597,8 @@ func (cg *configGenerator) convertEmailConfig(ctx context.Context, in monitoring
 		RequireTLS:    in.RequireTLS,
 	}
 
-	if in.To == "" {
-		return nil, errors.New("missing to address in email config")
-	}
-
 	if in.Smarthost != "" {
-		host, port, err := net.SplitHostPort(in.Smarthost)
-		if err != nil {
-			return nil, errors.New("failed to extract host and port from Smarthost")
-		}
-		out.Smarthost.Host = host
-		out.Smarthost.Port = port
+		out.Smarthost.Host, out.Smarthost.Port, _ = net.SplitHostPort(in.Smarthost)
 	}
 
 	if in.AuthPassword != nil {
@@ -595,20 +617,13 @@ func (cg *configGenerator) convertEmailConfig(ctx context.Context, in monitoring
 		out.AuthSecret = authSecret
 	}
 
-	var headers map[string]string
 	if l := len(in.Headers); l > 0 {
-		headers = make(map[string]string, l)
-
-		var key string
+		headers := make(map[string]string, l)
 		for _, d := range in.Headers {
-			key = strings.Title(d.Key)
-			if _, ok := headers[key]; ok {
-				return nil, errors.Errorf("duplicate header %q in email config", key)
-			}
-			headers[key] = d.Value
+			headers[strings.Title(d.Key)] = d.Value
 		}
+		out.Headers = headers
 	}
-	out.Headers = headers
 
 	if in.TLSConfig != nil {
 		out.TLSConfig = cg.convertTLSConfig(ctx, in.TLSConfig, crKey)
@@ -634,9 +649,6 @@ func (cg *configGenerator) convertVictorOpsConfig(ctx context.Context, in monito
 			return nil, errors.Errorf("failed to get secret %q", in.APIKey)
 		}
 		out.APIKey = apiKey
-	}
-	if in.RoutingKey == "" {
-		return nil, errors.New("missing Routing key in VictorOps config")
 	}
 
 	var customFields map[string]string
@@ -683,9 +695,6 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 	}
 
 	{
-		if in.UserKey == nil {
-			return nil, errors.Errorf("mandatory field %q is empty", "userKey")
-		}
 		userKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.UserKey)
 		if err != nil {
 			return nil, errors.Errorf("failed to get secret %q", in.UserKey)
@@ -697,9 +706,6 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 	}
 
 	{
-		if in.Token == nil {
-			return nil, errors.Errorf("mandatory field %q is empty", "token")
-		}
 		token, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.Token)
 		if err != nil {
 			return nil, errors.Errorf("failed to get secret %q", in.Token)
@@ -710,20 +716,16 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 		out.Token = token
 	}
 
-	if in.Retry != "" {
-		retry, err := time.ParseDuration(in.Retry)
-		if err != nil {
-			return nil, errors.Errorf("failed to parse Retry duration: %s", err)
+	{
+		if in.Retry != "" {
+			retry, _ := time.ParseDuration(in.Retry)
+			out.Retry = duration(retry)
 		}
-		out.Retry = duration(retry)
-	}
 
-	if in.Expire != "" {
-		expire, err := time.ParseDuration(in.Expire)
-		if err != nil {
-			return nil, errors.Errorf("failed to parse Expire duration: %s", err)
+		if in.Expire != "" {
+			expire, _ := time.ParseDuration(in.Expire)
+			out.Expire = duration(expire)
 		}
-		out.Expire = duration(expire)
 	}
 
 	if in.HTTPConfig != nil {
@@ -866,10 +868,12 @@ func (cg *configGenerator) convertTLSConfig(ctx context.Context, in *monitoringv
 }
 
 // sanitize the config against a specific AlertManager version
-// strips fields from config if unsupported
-func (c *alertmanagerConfig) sanitize(amVersion semver.Version, logger log.Logger) {
+// types may be sanitized in one of two ways:
+// 1. stripping the unsupported config and log a warning
+// 2. error which ensures that config will not be reconciled - this will be logged by a calling function
+func (c *alertmanagerConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
 	if c == nil {
-		return
+		return nil
 	}
 
 	c.Global.sanitize(amVersion, logger)
@@ -878,6 +882,14 @@ func (c *alertmanagerConfig) sanitize(amVersion semver.Version, logger log.Logge
 		receiver.sanitize(amVersion, logger)
 	}
 
+	for i, rule := range c.InhibitRules {
+		if err := rule.sanitize(amVersion, logger); err != nil {
+			return errors.Wrapf(err, "inhibit_rules[%d]", i)
+		}
+	}
+
+	err := c.Route.sanitize(amVersion, logger)
+	return err
 }
 
 // sanitize globalConfig
@@ -1016,4 +1028,65 @@ func (whc *webhookConfig) sanitize(amVersion semver.Version, logger log.Logger) 
 
 func (wcc *weChatConfig) sanitize(amVersion semver.Version, logger log.Logger) {
 	wcc.HTTPConfig.sanitize(amVersion, logger)
+}
+
+func (ir *inhibitRule) sanitize(amVersion semver.Version, logger log.Logger) error {
+	matchersV2Allowed := amVersion.GTE(semver.MustParse("0.22.0"))
+
+	if matchersV2Allowed && checkNotEmptyMap(ir.SourceMatch, ir.TargetMatch, ir.SourceMatchRE, ir.TargetMatchRE) {
+		msg := "inhibit rule is using a deprecated match syntax which will be removed in future versions"
+		level.Warn(logger).Log("msg", msg, "source_match", ir.SourceMatch, "target_match", ir.TargetMatch, "source_match_re", ir.SourceMatchRE, "target_match_re", ir.TargetMatchRE)
+	}
+
+	if !matchersV2Allowed && checkNotEmptySlice(ir.SourceMatchers, ir.TargetMatchers) {
+		msg := fmt.Sprintf(`target_matchers and source_matchers matching is supported in Alertmanager >= 0.22.0 only (target_matchers=%v, source_matchers=%v)`, ir.TargetMatchers, ir.SourceMatchers)
+		return errors.New(msg)
+	}
+	return nil
+}
+
+// sanitize a route and all its child routes.
+// Warns if the config is using deprecated syntax against a later version.
+// Returns an error if the config could potentially break routing logic
+func (r *route) sanitize(amVersion semver.Version, logger log.Logger) error {
+	if r == nil {
+		return nil
+	}
+
+	matchersV2Allowed := amVersion.GTE(semver.MustParse("0.22.0"))
+	withLogger := log.With(logger, "receiver", r.Receiver)
+
+	if matchersV2Allowed && checkNotEmptyMap(r.Match, r.MatchRE) {
+		msg := "'matchers' field is using a deprecated syntax which will be removed in future versions"
+		level.Warn(withLogger).Log("msg", msg, "match", r.Match, "match_re", r.MatchRE)
+	}
+
+	if !matchersV2Allowed && checkNotEmptySlice(r.Matchers) {
+		return fmt.Errorf(`invalid syntax in route config for 'matchers' comparison based matching is supported in Alertmanager >= 0.22.0 only (matchers=%v)`, r.Matchers)
+	}
+
+	for i, child := range r.Routes {
+		if err := child.sanitize(amVersion, logger); err != nil {
+			return errors.Wrapf(err, "route[%d]", i)
+		}
+	}
+	return nil
+}
+
+func checkNotEmptyMap(in ...map[string]string) bool {
+	for _, input := range in {
+		if len(input) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func checkNotEmptySlice(in ...[]string) bool {
+	for _, input := range in {
+		if len(input) > 0 {
+			return true
+		}
+	}
+	return false
 }

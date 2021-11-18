@@ -16,6 +16,7 @@ package alertmanager
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"reflect"
 	"testing"
@@ -44,7 +45,6 @@ func TestGenerateConfig(t *testing.T) {
 		expected   string
 	}
 
-	ctx := context.Background()
 	globalSlackAPIURL, err := url.Parse("http://slack.example.com")
 	if err != nil {
 		t.Fatal("Could not parse slack API URL")
@@ -127,12 +127,42 @@ templates: []
 `,
 		},
 		{
-			name:    "base with sub route, no CRs",
+			name:    "skeleton base with inhibit rules, no CRs",
+			kclient: fake.NewSimpleClientset(),
+			baseConfig: alertmanagerConfig{
+				InhibitRules: []*inhibitRule{
+					{
+						SourceMatchers: []string{"test!=dropped", "expect=~this-value"},
+						TargetMatchers: []string{"test!=dropped", "expect=~this-value"},
+					},
+				},
+				Route:     &route{Receiver: "null"},
+				Receivers: []*receiver{{Name: "null"}},
+			},
+			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{},
+			expected: `route:
+  receiver: "null"
+inhibit_rules:
+- target_matchers:
+  - test!=dropped
+  - expect=~this-value
+  source_matchers:
+  - test!=dropped
+  - expect=~this-value
+receivers:
+- name: "null"
+templates: []
+`,
+		},
+		{
+			name:    "base with sub route and matchers, no CRs",
 			kclient: fake.NewSimpleClientset(),
 			baseConfig: alertmanagerConfig{
 				Route: &route{
 					Receiver: "null",
+					Matchers: []string{"namespace=test"},
 					Routes: []*route{{
+						Matchers: []string{"namespace=custom-test"},
 						Receiver: "custom",
 					}},
 				},
@@ -144,8 +174,12 @@ templates: []
 			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{},
 			expected: `route:
   receiver: "null"
+  matchers:
+  - namespace=test
   routes:
   - receiver: custom
+    matchers:
+    - namespace=custom-test
 receivers:
 - name: "null"
 - name: custom
@@ -187,7 +221,7 @@ templates: []
 `,
 		},
 		{
-			name:    "skeleton base, CR with inhibition rules only",
+			name:    "skeleton base, CR with inhibition rules only (deprecated matchers)",
 			kclient: fake.NewSimpleClientset(),
 			baseConfig: alertmanagerConfig{
 				Route:     &route{Receiver: "null"},
@@ -237,7 +271,7 @@ templates: []
 `,
 		},
 		{
-			name:    "base with subroute, simple CR",
+			name:    "base with subroute - deprecated matching pattern, simple CR",
 			kclient: fake.NewSimpleClientset(),
 			baseConfig: alertmanagerConfig{
 				Route: &route{
@@ -711,11 +745,12 @@ templates: []
 		t.Fatal(err)
 	}
 
+	logger := log.NewNopLogger()
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := assets.NewStore(tc.kclient.CoreV1(), tc.kclient.CoreV1())
-			cg := newConfigGenerator(nil, version, store)
-			cfgBytes, err := cg.generateConfig(ctx, tc.baseConfig, tc.amConfigs)
+			cg := newConfigGenerator(logger, version, store)
+			cfgBytes, err := cg.generateConfig(context.Background(), tc.baseConfig, tc.amConfigs)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -741,14 +776,18 @@ func TestSanitizeConfig(t *testing.T) {
 	versionFileURLAllowed := semver.Version{Major: 0, Minor: 22}
 	versionFileURLNotAllowed := semver.Version{Major: 0, Minor: 21}
 
-	versionAuthzAllowed := versionFileURLAllowed
-	versionAuthzNotAllowed := versionFileURLNotAllowed
+	versionAuthzAllowed := semver.Version{Major: 0, Minor: 22}
+	versionAuthzNotAllowed := semver.Version{Major: 0, Minor: 21}
+
+	matcherV2SyntaxAllowed := semver.Version{Major: 0, Minor: 22}
+	matcherV2SyntaxNotAllowed := semver.Version{Major: 0, Minor: 21}
 
 	for _, tc := range []struct {
 		name           string
 		againstVersion semver.Version
 		in             *alertmanagerConfig
 		expect         alertmanagerConfig
+		expectErr      bool
 	}{
 		{
 			name:           "Test slack_api_url takes precedence in global config",
@@ -952,9 +991,77 @@ func TestSanitizeConfig(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:           "Test inhibit rules error with unsupported syntax",
+			againstVersion: matcherV2SyntaxNotAllowed,
+			in: &alertmanagerConfig{
+				InhibitRules: []*inhibitRule{
+					{
+						// this rule is marked as invalid. we must error out despite a valid config @[1]
+						TargetMatch: map[string]string{
+							"dropped": "as-side-effect",
+						},
+						TargetMatchers: []string{"drop=~me"},
+						SourceMatch: map[string]string{
+							"dropped": "as-side-effect",
+						},
+						SourceMatchers: []string{"drop=~me"},
+					},
+					{
+						// test we continue to support both syntax
+						TargetMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+						SourceMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name:           "Test inhibit rules happy path",
+			againstVersion: matcherV2SyntaxAllowed,
+			in: &alertmanagerConfig{
+				InhibitRules: []*inhibitRule{
+					{
+						// test we continue to support both syntax
+						TargetMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+						TargetMatchers: []string{"keep=~me"},
+						SourceMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+						SourceMatchers: []string{"keep=me"},
+					},
+				},
+			},
+			expect: alertmanagerConfig{
+				InhibitRules: []*inhibitRule{
+					{
+						TargetMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+						TargetMatchers: []string{"keep=~me"},
+						SourceMatch: map[string]string{
+							"keep": "me-for-now",
+						},
+						SourceMatchers: []string{"keep=me"},
+					},
+				},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.in.sanitize(tc.againstVersion, logger)
+			err := tc.in.sanitize(tc.againstVersion, logger)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				return
+			}
 			out := *tc.in
 			if !reflect.DeepEqual(out, tc.expect) {
 				t.Fatalf("wanted %v but got %v", tc.expect, out)
@@ -1032,4 +1139,118 @@ func TestSanitizeConfig(t *testing.T) {
 		})
 	}
 
+}
+
+func TestSanitizeRoute(t *testing.T) {
+	logger := log.NewNopLogger()
+	matcherV2SyntaxAllowed := semver.Version{Major: 0, Minor: 22}
+	matcherV2SyntaxNotAllowed := semver.Version{Major: 0, Minor: 21}
+
+	namespaceLabel := "namespace"
+	namespaceValue := "test-ns"
+
+	for _, tc := range []struct {
+		name           string
+		againstVersion semver.Version
+		in             *route
+		expectErr      bool
+		expect         route
+	}{
+		{
+			name:           "Test route with new syntax not supported fails",
+			againstVersion: matcherV2SyntaxNotAllowed,
+			in: &route{
+				Receiver: "test",
+				Match: map[string]string{
+					namespaceLabel: namespaceValue,
+				},
+				Matchers: []string{fmt.Sprintf("%s=%s", namespaceLabel, namespaceValue)},
+				Continue: true,
+				Routes: []*route{
+					{
+						Match: map[string]string{
+							"keep": "me",
+						},
+						Matchers: []string{"strip=~me"},
+					},
+				},
+			},
+			expectErr: true,
+		},
+		{
+			name:           "Test route with new syntax supported and no child routes",
+			againstVersion: matcherV2SyntaxAllowed,
+			in: &route{
+				Receiver: "test",
+				Match: map[string]string{
+					namespaceLabel: namespaceValue,
+				},
+				Matchers: []string{fmt.Sprintf("%s=%s", namespaceLabel, namespaceValue)},
+				Continue: true,
+			},
+			expect: route{
+				Receiver: "test",
+				Match: map[string]string{
+					namespaceLabel: namespaceValue,
+				},
+				Matchers: []string{fmt.Sprintf("%s=%s", namespaceLabel, namespaceValue)},
+				Continue: true,
+			},
+		},
+		{
+			name:           "Test route with new syntax supported with child routes",
+			againstVersion: matcherV2SyntaxAllowed,
+			in: &route{
+				Receiver: "test",
+				Match: map[string]string{
+					"some": "value",
+				},
+				Matchers: []string{fmt.Sprintf("%s=%s", namespaceLabel, namespaceValue)},
+				Continue: true,
+				Routes: []*route{
+					{
+						Match: map[string]string{
+							"keep": "me",
+						},
+						Matchers: []string{"keep=~me"},
+					},
+				},
+			},
+			expect: route{
+				Receiver: "test",
+				Match: map[string]string{
+					"some": "value",
+				},
+				Matchers: []string{fmt.Sprintf("%s=%s", namespaceLabel, namespaceValue)},
+				Continue: true,
+				Routes: []*route{
+					{
+						Match: map[string]string{
+							"keep": "me",
+						},
+						Matchers: []string{"keep=~me"},
+					},
+				},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.in.sanitize(tc.againstVersion, logger)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("wanted %v but got error %s", tc.expect, err.Error())
+			}
+
+			out := *tc.in
+			if !reflect.DeepEqual(out, tc.expect) {
+				t.Fatalf("wanted %v but got %v", tc.expect, out)
+			}
+		})
+	}
 }

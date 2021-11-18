@@ -75,6 +75,7 @@ func TestGlobalSettings(t *testing.T) {
 		QueryLogFile       string
 		Version            string
 		Expected           string
+		ExpectedErr        error
 	}
 
 	testcases := []testCase{
@@ -114,6 +115,16 @@ alerting:
 `,
 		},
 		{
+			Version:            "v2.15.2",
+			EvaluationInterval: "60 s",
+			ExpectedErr:        errors.New("invalid evaluationInterval value specified: not a valid duration string: \"60 s\""),
+		},
+		{
+			Version:            "v2.28.0",
+			EvaluationInterval: "randomvalue",
+			ExpectedErr:        errors.New("invalid evaluationInterval value specified: not a valid duration string: \"randomvalue\""),
+		},
+		{
 			Version:        "v2.15.2",
 			ScrapeInterval: "60s",
 			Expected: `global:
@@ -130,6 +141,11 @@ alerting:
     regex: prometheus_replica
   alertmanagers: []
 `,
+		},
+		{
+			Version:        "v2.28.0",
+			ScrapeInterval: "30 k",
+			ExpectedErr:    errors.New("invalid scrapeInterval value specified: not a valid duration string: \"30 k\""),
 		},
 		{
 			Version:       "v2.15.2",
@@ -149,6 +165,11 @@ alerting:
     regex: prometheus_replica
   alertmanagers: []
 `,
+		},
+		{
+			Version:       "v2.29.0",
+			ScrapeTimeout: "some value",
+			ExpectedErr:   errors.New("invalid scrapeTimeout value specified: not a valid duration string: \"some value\""),
 		},
 		{
 			Version: "v2.15.2",
@@ -217,14 +238,20 @@ alerting:
 			nil,
 			nil,
 		)
-		if err != nil {
-			t.Fatal(err)
+		if tc.ExpectedErr != nil {
+			if tc.ExpectedErr.Error() != err.Error() {
+				t.Logf("\n%s", pretty.Compare(tc.ExpectedErr.Error(), err.Error()))
+				t.Fatal("expected error and actual error do not match")
+			}
+			return
 		}
+
 		result := string(cfg)
 		if tc.Expected != string(cfg) {
 			fmt.Println(pretty.Compare(tc.Expected, result))
 			t.Fatal("expected Prometheus configuration and actual configuration do not match")
 		}
+
 	}
 }
 
@@ -921,7 +948,8 @@ scrape_configs:
   - action: keep
     source_labels:
     - __meta_kubernetes_ingress_label_prometheus_io_probe
-    regex: "true"
+    - __meta_kubernetes_ingress_labelpresent_prometheus_io_probe
+    regex: (true);true
   - source_labels:
     - __meta_kubernetes_ingress_scheme
     - __address__
@@ -1051,7 +1079,8 @@ scrape_configs:
   - action: keep
     source_labels:
     - __meta_kubernetes_ingress_label_prometheus_io_probe
-    regex: "true"
+    - __meta_kubernetes_ingress_labelpresent_prometheus_io_probe
+    regex: (true);true
   - source_labels:
     - __meta_kubernetes_ingress_scheme
     - __address__
@@ -1414,6 +1443,189 @@ alerting:
 	}
 }
 
+func TestAdditionalScrapeConfigs(t *testing.T) {
+	int32Ptr := func(i int32) *int32 {
+		return &i
+	}
+	getCfg := func(shards *int32) string {
+		cg := &ConfigGenerator{}
+		cfg, err := cg.GenerateConfig(
+			&monitoringv1.Prometheus{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "default",
+				},
+				Spec: monitoringv1.PrometheusSpec{
+					Shards: shards,
+				},
+			},
+			nil,
+			nil,
+			nil,
+			&assets.Store{},
+			[]byte(`- job_name: prometheus
+  scrape_interval: 15s
+  static_configs:
+  - targets: ['localhost:9090']
+- job_name: gce_app_bar
+  scrape_interval: 5s
+  gce_sd_config:
+    - project: foo
+      zone: us-central1
+  relabel_configs:
+    - action: keep
+      source_labels:
+      - __meta_gce_label_app
+      regex: my_app
+`),
+			nil,
+			nil,
+			nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(cfg)
+	}
+
+	testCases := []struct {
+		name     string
+		result   string
+		expected string
+	}{
+		{
+			name:   "unsharded prometheus",
+			result: getCfg(nil),
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs:
+- job_name: prometheus
+  scrape_interval: 15s
+  static_configs:
+  - targets:
+    - localhost:9090
+- job_name: gce_app_bar
+  scrape_interval: 5s
+  gce_sd_config:
+  - project: foo
+    zone: us-central1
+  relabel_configs:
+  - action: keep
+    source_labels:
+    - __meta_gce_label_app
+    regex: my_app
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+`,
+		},
+		{
+			name:   "one prometheus shard",
+			result: getCfg(int32Ptr(1)),
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs:
+- job_name: prometheus
+  scrape_interval: 15s
+  static_configs:
+  - targets:
+    - localhost:9090
+- job_name: gce_app_bar
+  scrape_interval: 5s
+  gce_sd_config:
+  - project: foo
+    zone: us-central1
+  relabel_configs:
+  - action: keep
+    source_labels:
+    - __meta_gce_label_app
+    regex: my_app
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+`,
+		},
+		{
+			name:   "sharded prometheus",
+			result: getCfg(int32Ptr(3)),
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs:
+- job_name: prometheus
+  scrape_interval: 15s
+  static_configs:
+  - targets:
+    - localhost:9090
+  relabel_configs:
+  - source_labels:
+    - __address__
+    target_label: __tmp_hash
+    modulus: 3
+    action: hashmod
+  - source_labels:
+    - __tmp_hash
+    regex: $(SHARD)
+    action: keep
+- job_name: gce_app_bar
+  scrape_interval: 5s
+  gce_sd_config:
+  - project: foo
+    zone: us-central1
+  relabel_configs:
+  - action: keep
+    source_labels:
+    - __meta_gce_label_app
+    regex: my_app
+  - source_labels:
+    - __address__
+    target_label: __tmp_hash
+    modulus: 3
+    action: hashmod
+  - source_labels:
+    - __tmp_hash
+    regex: $(SHARD)
+    action: keep
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+`,
+		},
+	}
+
+	for _, tt := range testCases {
+		tt := tt
+		t.Run(
+			tt.name, func(t *testing.T) {
+				if tt.expected != tt.result {
+					fmt.Println(pretty.Compare(tt.expected, tt.result))
+					t.Fatal("expected Prometheus configuration and actual configuration do not match")
+				}
+			},
+		)
+	}
+}
+
 func TestAdditionalAlertRelabelConfigs(t *testing.T) {
 	cg := &ConfigGenerator{}
 	cfg, err := cg.GenerateConfig(
@@ -1582,7 +1794,8 @@ scrape_configs:
   - action: keep
     source_labels:
     - __meta_kubernetes_service_label_foo
-    regex: bar
+    - __meta_kubernetes_service_labelpresent_foo
+    regex: (bar);true
   - action: keep
     source_labels:
     - __meta_kubernetes_endpoint_port_name
@@ -1823,6 +2036,13 @@ func TestEnforcedNamespaceLabelServiceMonitor(t *testing.T) {
 						MatchLabels: map[string]string{
 							"foo": "bar",
 						},
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "alpha",
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{"beta", "gamma"},
+							},
+						},
 					},
 					Endpoints: []monitoringv1.Endpoint{
 						{
@@ -1884,7 +2104,13 @@ scrape_configs:
   - action: keep
     source_labels:
     - __meta_kubernetes_service_label_foo
-    regex: bar
+    - __meta_kubernetes_service_labelpresent_foo
+    regex: (bar);true
+  - action: keep
+    source_labels:
+    - __meta_kubernetes_service_label_alpha
+    - __meta_kubernetes_service_labelpresent_alpha
+    regex: (beta|gamma);true
   - action: keep
     source_labels:
     - __meta_kubernetes_endpoint_port_name
@@ -3398,7 +3624,8 @@ scrape_configs:
   - action: keep
     source_labels:
     - __meta_kubernetes_service_label_foo
-    regex: bar
+    - __meta_kubernetes_service_labelpresent_foo
+    regex: (bar);true
   - source_labels:
     - __meta_kubernetes_endpoint_address_target_kind
     - __meta_kubernetes_endpoint_address_target_name
@@ -4431,10 +4658,10 @@ alerting:
 
 func TestRemoteReadConfig(t *testing.T) {
 	for _, tc := range []struct {
-		version    string
-		remoteRead monitoringv1.RemoteReadSpec
-
-		expected string
+		version     string
+		remoteRead  monitoringv1.RemoteReadSpec
+		expected    string
+		expectedErr error
 	}{
 		{
 			version: "v2.27.1",
@@ -4534,6 +4761,19 @@ remote_read:
     credentials: secret
 `,
 		},
+		{
+			version: "v2.26.0",
+			remoteRead: monitoringv1.RemoteReadSpec{
+				URL: "http://example.com",
+				OAuth2: &monitoringv1.OAuth2{
+					TokenURL:       "http://token-url",
+					Scopes:         []string{"scope1"},
+					EndpointParams: map[string]string{"param": "value"},
+				},
+				RemoteTimeout: "30 g",
+			},
+			expectedErr: errors.New("invalid remoteRead[0].remoteTimeout value specified: not a valid duration string: \"30 g\""),
+		},
 	} {
 		t.Run(fmt.Sprintf("version=%s", tc.version), func(t *testing.T) {
 			cg := &ConfigGenerator{}
@@ -4575,8 +4815,12 @@ remote_read:
 				nil,
 				nil,
 			)
-			if err != nil {
-				t.Fatal(err)
+			if tc.expectedErr != nil {
+				if tc.expectedErr.Error() != err.Error() {
+					t.Logf("\n%s", pretty.Compare(tc.expectedErr.Error(), err.Error()))
+					t.Fatal("expected error and actual error do not match")
+				}
+				return
 			}
 
 			result := string(cfg)
@@ -4584,6 +4828,7 @@ remote_read:
 				t.Logf("\n%s", pretty.Compare(tc.expected, result))
 				t.Fatal("expected Prometheus configuration and actual configuration do not match")
 			}
+
 		})
 	}
 }
@@ -4592,8 +4837,8 @@ func TestRemoteWriteConfig(t *testing.T) {
 	for _, tc := range []struct {
 		version     string
 		remoteWrite monitoringv1.RemoteWriteSpec
-
-		expected string
+		expected    string
+		expectedErr error
 	}{
 		{
 			version: "v2.22.0",
@@ -4851,6 +5096,151 @@ remote_write:
     credentials: secret
 `,
 		},
+		{
+			version: "v2.26.0",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL: "http://example.com",
+				Sigv4: &monitoringv1.Sigv4{
+					Profile: "profilename",
+					RoleArn: "arn:aws:iam::123456789012:instance-profile/prometheus",
+					AccessKey: &v1.SecretKeySelector{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "sigv4-secret",
+						},
+						Key: "access-key",
+					},
+					SecretKey: &v1.SecretKeySelector{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "sigv4-secret",
+						},
+						Key: "secret-key",
+					},
+					Region: "us-central-0",
+				},
+				QueueConfig: &monitoringv1.QueueConfig{
+					Capacity:          1000,
+					MinShards:         1,
+					MaxShards:         10,
+					MaxSamplesPerSend: 100,
+					BatchSendDeadline: "20s",
+					MaxRetries:        3,
+					MinBackoff:        "1s",
+					MaxBackoff:        "10s",
+				},
+				MetadataConfig: &monitoringv1.MetadataConfig{
+					Send:         false,
+					SendInterval: "1m",
+				},
+			},
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs: []
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+remote_write:
+- url: http://example.com
+  remote_timeout: 30s
+  sigv4:
+    region: us-central-0
+    access_key: access-key
+    secret_key: secret-key
+    profile: profilename
+    role_arn: arn:aws:iam::123456789012:instance-profile/prometheus
+  queue_config:
+    capacity: 1000
+    min_shards: 1
+    max_shards: 10
+    max_samples_per_send: 100
+    batch_send_deadline: 20s
+    min_backoff: 1s
+    max_backoff: 10s
+  metadata_config:
+    send: false
+    send_interval: 1m
+`,
+		}, {
+			version: "v2.26.0",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL:           "http://example.com",
+				RemoteTimeout: "1s",
+				Sigv4:         nil,
+			},
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs: []
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+remote_write:
+- url: http://example.com
+  remote_timeout: 1s
+`,
+		},
+		{
+			version: "v2.26.0",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL:           "http://example.com",
+				Sigv4:         &monitoringv1.Sigv4{},
+				RemoteTimeout: "1s",
+			},
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs: []
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+remote_write:
+- url: http://example.com
+  remote_timeout: 1s
+  sigv4: {}
+`,
+		},
+		{
+			version: "v2.27.1",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL: "http://example.com",
+				OAuth2: &monitoringv1.OAuth2{
+					TokenURL:       "http://token-url",
+					Scopes:         []string{"scope1"},
+					EndpointParams: map[string]string{"param": "value"},
+				},
+				RemoteTimeout: "30ss",
+			},
+			expectedErr: errors.New("invalid remoteWrite[0].remoteTimeout value specified: not a valid duration string: \"30ss\""),
+		},
+		{
+			version: "v2.26.0",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL: "http://example.com",
+				MetadataConfig: &monitoringv1.MetadataConfig{
+					Send:         false,
+					SendInterval: "1p",
+				},
+			},
+			expectedErr: errors.New("invalid remoteWrite[0].metadataConfig.sendInterval value specified: not a valid duration string: \"1p\""),
+		},
 	} {
 		t.Run(fmt.Sprintf("version=%s", tc.version), func(t *testing.T) {
 			cg := &ConfigGenerator{}
@@ -4868,7 +5258,28 @@ remote_write:
 						},
 					},
 					RemoteWrite: []monitoringv1.RemoteWriteSpec{tc.remoteWrite},
+					Secrets:     []string{"sigv4-secret"},
 				},
+			}
+
+			store := &assets.Store{
+				BasicAuthAssets: map[string]assets.BasicAuthCredentials{},
+				OAuth2Assets: map[string]assets.OAuth2Credentials{
+					"remoteWrite/0": {
+						ClientID:     "client-id",
+						ClientSecret: "client-secret",
+					},
+				},
+				TokenAssets: map[string]assets.Token{
+					"remoteWrite/auth/0": assets.Token("secret"),
+				}}
+			if tc.remoteWrite.Sigv4 != nil && tc.remoteWrite.Sigv4.AccessKey != nil {
+				store.SigV4Assets = map[string]assets.SigV4Credentials{
+					"remoteWrite/0": {
+						AccessKeyID: "access-key",
+						SecretKeyID: "secret-key",
+					},
+				}
 			}
 
 			cfg, err := cg.GenerateConfig(
@@ -4876,31 +5287,24 @@ remote_write:
 				nil,
 				nil,
 				nil,
-				&assets.Store{
-					BasicAuthAssets: map[string]assets.BasicAuthCredentials{},
-					OAuth2Assets: map[string]assets.OAuth2Credentials{
-						"remoteWrite/0": {
-							ClientID:     "client-id",
-							ClientSecret: "client-secret",
-						},
-					},
-					TokenAssets: map[string]assets.Token{
-						"remoteWrite/auth/0": assets.Token("secret"),
-					}},
+				store,
 				nil,
 				nil,
 				nil,
-				nil,
-			)
-			if err != nil {
-				t.Fatal(err)
+				nil)
+			if tc.expectedErr != nil {
+				if tc.expectedErr.Error() != err.Error() {
+					t.Logf("\n%s", pretty.Compare(tc.expectedErr.Error(), err.Error()))
+					t.Fatal("expected error and actual error do not match")
+				}
+				return
 			}
-
 			result := string(cfg)
 			if tc.expected != result {
 				t.Logf("\n%s", pretty.Compare(tc.expected, result))
 				t.Fatal("expected Prometheus configuration and actual configuration do not match")
 			}
+
 		})
 	}
 }
@@ -5884,13 +6288,144 @@ alerting:
 					t.Logf("\n%s", pretty.Compare(tc.expectedErr.Error(), err.Error()))
 					t.Fatal("expected error and actual error do not match")
 				}
-			} else {
-				result := string(cfg)
-				if tc.expected != result {
-					t.Logf("\n%s", pretty.Compare(tc.expected, result))
-					t.Fatal("expected Prometheus configuration and actual configuration do not match")
-				}
+				return
+			}
+			result := string(cfg)
+			if tc.expected != result {
+				t.Logf("\n%s", pretty.Compare(tc.expected, result))
+				t.Fatal("expected Prometheus configuration and actual configuration do not match")
 			}
 		})
+	}
+}
+
+func TestMatchExpressionsServiceMonitor(t *testing.T) {
+	cg := &ConfigGenerator{}
+	cfg, err := cg.GenerateConfig(
+		&monitoringv1.Prometheus{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test",
+				Namespace: "ns-value",
+			},
+		},
+		map[string]*monitoringv1.ServiceMonitor{
+			"test": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "default",
+				},
+				Spec: monitoringv1.ServiceMonitorSpec{
+					Selector: metav1.LabelSelector{
+						MatchExpressions: []metav1.LabelSelectorRequirement{
+							{
+								Key:      "alpha",
+								Operator: metav1.LabelSelectorOpIn,
+								Values:   []string{"beta", "gamma"},
+							},
+						},
+					},
+					Endpoints: []monitoringv1.Endpoint{
+						{
+							Port:     "web",
+							Interval: "30s",
+						},
+					},
+				},
+			},
+		},
+		nil,
+		nil,
+		&assets.Store{},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: ns-value/test
+    prometheus_replica: $(POD_NAME)
+rule_files: []
+scrape_configs:
+- job_name: serviceMonitor/default/test/0
+  honor_labels: false
+  kubernetes_sd_configs:
+  - role: endpoints
+    namespaces:
+      names:
+      - default
+  scrape_interval: 30s
+  relabel_configs:
+  - source_labels:
+    - job
+    target_label: __tmp_prometheus_job_name
+  - action: keep
+    source_labels:
+    - __meta_kubernetes_service_label_alpha
+    - __meta_kubernetes_service_labelpresent_alpha
+    regex: (beta|gamma);true
+  - action: keep
+    source_labels:
+    - __meta_kubernetes_endpoint_port_name
+    regex: web
+  - source_labels:
+    - __meta_kubernetes_endpoint_address_target_kind
+    - __meta_kubernetes_endpoint_address_target_name
+    separator: ;
+    regex: Node;(.*)
+    replacement: ${1}
+    target_label: node
+  - source_labels:
+    - __meta_kubernetes_endpoint_address_target_kind
+    - __meta_kubernetes_endpoint_address_target_name
+    separator: ;
+    regex: Pod;(.*)
+    replacement: ${1}
+    target_label: pod
+  - source_labels:
+    - __meta_kubernetes_namespace
+    target_label: namespace
+  - source_labels:
+    - __meta_kubernetes_service_name
+    target_label: service
+  - source_labels:
+    - __meta_kubernetes_pod_name
+    target_label: pod
+  - source_labels:
+    - __meta_kubernetes_pod_container_name
+    target_label: container
+  - source_labels:
+    - __meta_kubernetes_service_name
+    target_label: job
+    replacement: ${1}
+  - target_label: endpoint
+    replacement: web
+  - source_labels:
+    - __address__
+    target_label: __tmp_hash
+    modulus: 1
+    action: hashmod
+  - source_labels:
+    - __tmp_hash
+    regex: $(SHARD)
+    action: keep
+  metric_relabel_configs: []
+alerting:
+  alert_relabel_configs:
+  - action: labeldrop
+    regex: prometheus_replica
+  alertmanagers: []
+`
+
+	result := string(cfg)
+	if expected != result {
+		diff := cmp.Diff(expected, result)
+		t.Fatalf("expected Prometheus configuration and actual configuration do not match for enforced namespace label test:\n%s", diff)
 	}
 }
