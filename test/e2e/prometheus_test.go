@@ -305,6 +305,7 @@ func createK8sAppMonitoring(
 }
 
 func testPromRemoteWriteWithTLS(t *testing.T) {
+	t.Parallel()
 	// can't extend the names since ns cannot be created with more than 63 characters
 	tests := []testFramework.PromRemoteWriteTestConfig{
 		// working configurations
@@ -1691,7 +1692,7 @@ func testPromOnlyUpdatedOnRelevantChanges(t *testing.T) {
 					KubeClient.
 					CoreV1().
 					Secrets(ns).
-					Get(context.Background(), "prometheus-"+prometheusName+"-tls-assets", metav1.GetOptions{})
+					Get(context.Background(), "prometheus-"+prometheusName+"-tls-assets-0", metav1.GetOptions{})
 			},
 			MaxExpectedChanges: 2,
 		},
@@ -2382,7 +2383,7 @@ func testPromDiscoverTargetPort(t *testing.T) {
 			Endpoints: []monitoringv1.Endpoint{
 				{
 					TargetPort: &targetPort,
-					Interval:   "30s",
+					Interval:   "5s",
 				},
 			},
 		},
@@ -3739,18 +3740,27 @@ func testPromMinReadySeconds(t *testing.T) {
 	}
 
 	var updated uint32 = 10
+	var got int32
 	prom.Spec.MinReadySeconds = &updated
 	if _, err = framework.UpdatePrometheusAndWaitUntilReady(context.Background(), ns, prom); err != nil {
 		t.Fatal("Updating prometheus failed: ", err)
 	}
 
-	promSS, err = kubeClient.AppsV1().StatefulSets(ns).Get(context.Background(), "prometheus-basic-prometheus", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	err = wait.Poll(time.Second, time.Minute*5, func() (bool, error) {
+		promSS, err := kubeClient.AppsV1().StatefulSets(ns).Get(context.Background(), "prometheus-basic-prometheus", metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
 
-	if promSS.Spec.MinReadySeconds != int32(updated) {
-		t.Fatalf("expected MinReadySeconds to be %d but got %d", updated, promSS.Spec.MinReadySeconds)
+		if promSS.Spec.MinReadySeconds != int32(updated) {
+			got = promSS.Spec.MinReadySeconds
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		t.Fatalf("expected MinReadySeconds to be %d but got %d", updated, got)
 	}
 }
 

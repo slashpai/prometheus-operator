@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/go-openapi/swag"
 	"github.com/google/go-cmp/cmp"
 	"github.com/kylelemons/godebug/pretty"
@@ -37,6 +37,19 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/pointer"
 )
+
+func mustNewConfigGenerator(t *testing.T, p *monitoringv1.Prometheus) *ConfigGenerator {
+	t.Helper()
+
+	logger := level.NewFilter(log.NewLogfmtLogger(os.Stderr), level.AllowWarn())
+
+	cg, err := NewConfigGenerator(logger, p)
+	if err != nil {
+		t.Fatalf("failed to create config generator: %v", err)
+	}
+
+	return cg
+}
 
 func TestConfigGeneration(t *testing.T) {
 	for _, v := range operator.PrometheusCompatibilityMatrix {
@@ -87,13 +100,7 @@ func TestGlobalSettings(t *testing.T) {
   external_labels:
     prometheus: /
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -105,13 +112,7 @@ alerting:
   external_labels:
     prometheus: /
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -133,13 +134,7 @@ alerting:
   external_labels:
     prometheus: /
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -157,13 +152,7 @@ alerting:
     prometheus: /
     prometheus_replica: $(POD_NAME)
   scrape_timeout: 30s
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -185,13 +174,7 @@ alerting:
     key2: value2
     prometheus: /
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -204,31 +187,28 @@ alerting:
     prometheus: /
     prometheus_replica: $(POD_NAME)
   query_log_file: test.log
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 	}
 
 	for _, tc := range testcases {
-		cg := &ConfigGenerator{}
-		cfg, err := cg.GenerateConfig(
-			&monitoringv1.Prometheus{
-				ObjectMeta: metav1.ObjectMeta{},
-				Spec: monitoringv1.PrometheusSpec{
-					EvaluationInterval: tc.EvaluationInterval,
-					ScrapeInterval:     tc.ScrapeInterval,
-					ScrapeTimeout:      tc.ScrapeTimeout,
-					ExternalLabels:     tc.ExternalLabels,
-					QueryLogFile:       tc.QueryLogFile,
-					Version:            tc.Version,
-				},
+		p := &monitoringv1.Prometheus{
+			ObjectMeta: metav1.ObjectMeta{},
+			Spec: monitoringv1.PrometheusSpec{
+				EvaluationInterval: tc.EvaluationInterval,
+				ScrapeInterval:     tc.ScrapeInterval,
+				ScrapeTimeout:      tc.ScrapeTimeout,
+				ExternalLabels:     tc.ExternalLabels,
+				QueryLogFile:       tc.QueryLogFile,
+				Version:            tc.Version,
 			},
+		}
+
+		cg := mustNewConfigGenerator(t, p)
+
+		cfg, err := cg.Generate(
+			p,
 			map[string]*monitoringv1.ServiceMonitor{},
 			nil,
 			nil,
@@ -357,15 +337,18 @@ func TestNamespaceSetCorrectly(t *testing.T) {
 `,
 		},
 	}
-	cg := &ConfigGenerator{}
 
 	for _, tc := range testcases {
 		selectedNamespaces := getNamespacesFromNamespaceSelector(&tc.ServiceMonitor.Spec.NamespaceSelector, tc.ServiceMonitor.Namespace, tc.IgnoreNamespaceSelectors)
-		c := cg.generateK8SSDConfig(semver.Version{}, selectedNamespaces, nil, nil, kubernetesSDRoleEndpoint)
+
+		cg := ConfigGenerator{}
+
+		c := cg.generateK8SSDConfig(selectedNamespaces, nil, nil, kubernetesSDRoleEndpoint)
 		s, err := yaml.Marshal(yaml.MapSlice{c})
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		if tc.Expected != string(s) {
 			t.Fatalf("Unexpected result.\n\nGot:\n\n%s\n\nExpected:\n\n%s\n\n", string(s), tc.Expected)
 		}
@@ -388,9 +371,11 @@ func TestNamespaceSetCorrectlyForPodMonitor(t *testing.T) {
 		},
 	}
 
-	cg := &ConfigGenerator{}
 	selectedNamespaces := getNamespacesFromNamespaceSelector(&pm.Spec.NamespaceSelector, pm.Namespace, false)
-	c := cg.generateK8SSDConfig(semver.Version{}, selectedNamespaces, nil, nil, kubernetesSDRolePod)
+
+	cg := &ConfigGenerator{}
+	c := cg.generateK8SSDConfig(selectedNamespaces, nil, nil, kubernetesSDRolePod)
+
 	s, err := yaml.Marshal(yaml.MapSlice{c})
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +396,7 @@ func TestNamespaceSetCorrectlyForPodMonitor(t *testing.T) {
 
 func TestProbeStaticTargetsConfigGeneration(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -482,7 +467,6 @@ func TestProbeStaticTargetsConfigGeneration(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -515,11 +499,6 @@ scrape_configs:
     replacement: bar
     action: replace
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -530,7 +509,7 @@ alerting:
 
 func TestProbeStaticTargetsConfigGenerationWithLabelEnforce(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -601,7 +580,6 @@ func TestProbeStaticTargetsConfigGenerationWithLabelEnforce(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -636,11 +614,6 @@ scrape_configs:
     action: labeldrop
   - target_label: namespace
     replacement: default
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -651,7 +624,7 @@ alerting:
 
 func TestProbeStaticTargetsConfigGenerationWithJobName(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -712,7 +685,6 @@ func TestProbeStaticTargetsConfigGenerationWithJobName(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -742,11 +714,6 @@ scrape_configs:
   - target_label: __address__
     replacement: blackbox.exporter.io
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -757,7 +724,7 @@ alerting:
 
 func TestProbeStaticTargetsConfigGenerationWithoutModule(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -817,7 +784,6 @@ func TestProbeStaticTargetsConfigGenerationWithoutModule(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -844,11 +810,6 @@ scrape_configs:
   - target_label: __address__
     replacement: blackbox.exporter.io
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -859,7 +820,7 @@ alerting:
 
 func TestProbeIngressSDConfigGeneration(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -930,7 +891,6 @@ func TestProbeIngressSDConfigGeneration(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -974,11 +934,6 @@ scrape_configs:
     replacement: bar
     action: replace
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -989,7 +944,7 @@ alerting:
 
 func TestProbeIngressSDConfigGenerationWithLabelEnforce(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -1061,7 +1016,6 @@ func TestProbeIngressSDConfigGenerationWithLabelEnforce(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -1109,11 +1063,6 @@ scrape_configs:
   metric_relabel_configs:
   - target_label: namespace
     replacement: default
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -1137,8 +1086,6 @@ func TestK8SSDConfigGeneration(t *testing.T) {
 			},
 		},
 	}
-
-	cg := &ConfigGenerator{}
 
 	testcases := []struct {
 		apiserverConfig *monitoringv1.APIServerConfig
@@ -1189,8 +1136,9 @@ func TestK8SSDConfigGeneration(t *testing.T) {
 	}
 
 	for _, tc := range testcases {
+		cg := &ConfigGenerator{}
+
 		c := cg.generateK8SSDConfig(
-			semver.Version{},
 			getNamespacesFromNamespaceSelector(&sm.Spec.NamespaceSelector, sm.Namespace, false),
 			tc.apiserverConfig,
 			tc.store,
@@ -1210,7 +1158,7 @@ func TestK8SSDConfigGeneration(t *testing.T) {
 
 func TestAlertmanagerBearerToken(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -1251,7 +1199,6 @@ func TestAlertmanagerBearerToken(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
 alerting:
   alert_relabel_configs:
@@ -1286,27 +1233,28 @@ alerting:
 }
 
 func TestAlertmanagerAPIVersion(t *testing.T) {
-	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
-		&monitoringv1.Prometheus{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
-			},
-			Spec: monitoringv1.PrometheusSpec{
-				Version: "v2.11.0",
-				Alerting: &monitoringv1.AlertingSpec{
-					Alertmanagers: []monitoringv1.AlertmanagerEndpoints{
-						{
-							Name:       "alertmanager-main",
-							Namespace:  "default",
-							Port:       intstr.FromString("web"),
-							APIVersion: "v2",
-						},
+	p := &monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: monitoringv1.PrometheusSpec{
+			Version: "v2.11.0",
+			Alerting: &monitoringv1.AlertingSpec{
+				Alertmanagers: []monitoringv1.AlertmanagerEndpoints{
+					{
+						Name:       "alertmanager-main",
+						Namespace:  "default",
+						Port:       intstr.FromString("web"),
+						APIVersion: "v2",
 					},
 				},
 			},
 		},
+	}
+	cg := mustNewConfigGenerator(t, p)
+	cfg, err := cg.Generate(
+		p,
 		nil,
 		nil,
 		nil,
@@ -1329,7 +1277,6 @@ func TestAlertmanagerAPIVersion(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
 alerting:
   alert_relabel_configs:
@@ -1364,28 +1311,29 @@ alerting:
 }
 
 func TestAlertmanagerTimeoutConfig(t *testing.T) {
-	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
-		&monitoringv1.Prometheus{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
-			},
-			Spec: monitoringv1.PrometheusSpec{
-				Version: "v2.11.0",
-				Alerting: &monitoringv1.AlertingSpec{
-					Alertmanagers: []monitoringv1.AlertmanagerEndpoints{
-						{
-							Name:       "alertmanager-main",
-							Namespace:  "default",
-							Port:       intstr.FromString("web"),
-							APIVersion: "v2",
-							Timeout:    pointer.StringPtr("60s"),
-						},
+	p := &monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: monitoringv1.PrometheusSpec{
+			Version: "v2.11.0",
+			Alerting: &monitoringv1.AlertingSpec{
+				Alertmanagers: []monitoringv1.AlertmanagerEndpoints{
+					{
+						Name:       "alertmanager-main",
+						Namespace:  "default",
+						Port:       intstr.FromString("web"),
+						APIVersion: "v2",
+						Timeout:    pointer.StringPtr("60s"),
 					},
 				},
 			},
 		},
+	}
+	cg := mustNewConfigGenerator(t, p)
+	cfg, err := cg.Generate(
+		p,
 		nil,
 		nil,
 		nil,
@@ -1408,7 +1356,6 @@ func TestAlertmanagerTimeoutConfig(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
 alerting:
   alert_relabel_configs:
@@ -1449,7 +1396,7 @@ func TestAdditionalScrapeConfigs(t *testing.T) {
 	}
 	getCfg := func(shards *int32) string {
 		cg := &ConfigGenerator{}
-		cfg, err := cg.GenerateConfig(
+		cfg, err := cg.Generate(
 			&monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -1502,7 +1449,6 @@ func TestAdditionalScrapeConfigs(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: prometheus
   scrape_interval: 15s
@@ -1519,11 +1465,6 @@ scrape_configs:
     source_labels:
     - __meta_gce_label_app
     regex: my_app
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -1535,7 +1476,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: prometheus
   scrape_interval: 15s
@@ -1552,11 +1492,6 @@ scrape_configs:
     source_labels:
     - __meta_gce_label_app
     regex: my_app
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 		{
@@ -1568,7 +1503,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: prometheus
   scrape_interval: 15s
@@ -1604,11 +1538,6 @@ scrape_configs:
     - __tmp_hash
     regex: $(SHARD)
     action: keep
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `,
 		},
 	}
@@ -1628,7 +1557,7 @@ alerting:
 
 func TestAdditionalAlertRelabelConfigs(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -1669,7 +1598,6 @@ func TestAdditionalAlertRelabelConfigs(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
 alerting:
   alert_relabel_configs:
@@ -1708,7 +1636,7 @@ alerting:
 
 func TestNoEnforcedNamespaceLabelServiceMonitor(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -1777,7 +1705,6 @@ func TestNoEnforcedNamespaceLabelServiceMonitor(t *testing.T) {
   external_labels:
     prometheus: ns-value/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/test/0
   honor_labels: true
@@ -1855,11 +1782,6 @@ scrape_configs:
     - __name__
     regex: container_(network_tcp_usage_total|network_udp_usage_total|tasks_state|cpu_load_average_10s)
     action: drop
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -1868,9 +1790,10 @@ alerting:
 		t.Fatal("expected Prometheus configuration and actual configuration do not match")
 	}
 }
+
 func TestEnforcedNamespaceLabelPodMonitor(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -1934,7 +1857,6 @@ func TestEnforcedNamespaceLabelPodMonitor(t *testing.T) {
   external_labels:
     prometheus: ns-value/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: podMonitor/pod-monitor-ns/testpodmonitor1/0
   honor_labels: false
@@ -1999,11 +1921,6 @@ scrape_configs:
     action: drop
   - target_label: ns-key
     replacement: pod-monitor-ns
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2015,7 +1932,7 @@ alerting:
 
 func TestEnforcedNamespaceLabelServiceMonitor(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -2087,7 +2004,6 @@ func TestEnforcedNamespaceLabelServiceMonitor(t *testing.T) {
   external_labels:
     prometheus: ns-value/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/test/0
   honor_labels: false
@@ -2171,11 +2087,6 @@ scrape_configs:
     action: drop
   - target_label: ns-key
     replacement: default
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2187,7 +2098,7 @@ alerting:
 
 func TestAdditionalAlertmanagers(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -2227,7 +2138,6 @@ func TestAdditionalAlertmanagers(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
 alerting:
   alert_relabel_configs:
@@ -2264,22 +2174,23 @@ alerting:
 }
 
 func TestSettingHonorTimestampsInServiceMonitor(t *testing.T) {
-	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
-		&monitoringv1.Prometheus{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
-			},
-			Spec: monitoringv1.PrometheusSpec{
-				Version: "v2.9.0",
-				ServiceMonitorSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"group": "group1",
-					},
+	p := &monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: monitoringv1.PrometheusSpec{
+			Version: "v2.9.0",
+			ServiceMonitorSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"group": "group1",
 				},
 			},
 		},
+	}
+	cg := mustNewConfigGenerator(t, p)
+	cfg, err := cg.Generate(
+		p,
 		map[string]*monitoringv1.ServiceMonitor{
 			"testservicemonitor1": {
 				ObjectMeta: metav1.ObjectMeta{
@@ -2319,7 +2230,6 @@ func TestSettingHonorTimestampsInServiceMonitor(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -2390,11 +2300,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2406,22 +2311,23 @@ alerting:
 }
 
 func TestSettingHonorTimestampsInPodMonitor(t *testing.T) {
-	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
-		&monitoringv1.Prometheus{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
-			},
-			Spec: monitoringv1.PrometheusSpec{
-				Version: "v2.9.0",
-				ServiceMonitorSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"group": "group1",
-					},
+	p := &monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: monitoringv1.PrometheusSpec{
+			Version: "v2.9.0",
+			ServiceMonitorSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"group": "group1",
 				},
 			},
 		},
+	}
+	cg := mustNewConfigGenerator(t, p)
+	cfg, err := cg.Generate(
+		p,
 		nil,
 		map[string]*monitoringv1.PodMonitor{
 			"testpodmonitor1": {
@@ -2461,7 +2367,6 @@ func TestSettingHonorTimestampsInPodMonitor(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: podMonitor/default/testpodmonitor1/0
   honor_labels: false
@@ -2513,11 +2418,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2529,23 +2429,24 @@ alerting:
 }
 
 func TestHonorTimestampsOverriding(t *testing.T) {
-	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
-		&monitoringv1.Prometheus{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test",
-				Namespace: "default",
-			},
-			Spec: monitoringv1.PrometheusSpec{
-				Version:                 "v2.9.0",
-				OverrideHonorTimestamps: true,
-				ServiceMonitorSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						"group": "group1",
-					},
+	p := &monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test",
+			Namespace: "default",
+		},
+		Spec: monitoringv1.PrometheusSpec{
+			Version:                 "v2.9.0",
+			OverrideHonorTimestamps: true,
+			ServiceMonitorSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"group": "group1",
 				},
 			},
 		},
+	}
+	cg := mustNewConfigGenerator(t, p)
+	cfg, err := cg.Generate(
+		p,
 		map[string]*monitoringv1.ServiceMonitor{
 			"testservicemonitor1": {
 				ObjectMeta: metav1.ObjectMeta{
@@ -2585,7 +2486,6 @@ func TestHonorTimestampsOverriding(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -2656,11 +2556,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2673,7 +2568,7 @@ alerting:
 
 func TestSettingHonorLabels(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -2726,7 +2621,6 @@ func TestSettingHonorLabels(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: true
@@ -2796,11 +2690,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2813,7 +2702,7 @@ alerting:
 
 func TestHonorLabelsOverriding(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -2867,7 +2756,6 @@ func TestHonorLabelsOverriding(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -2937,11 +2825,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -2954,7 +2837,7 @@ alerting:
 
 func TestTargetLabels(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -3007,7 +2890,6 @@ func TestTargetLabels(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -3077,11 +2959,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -3151,6 +3028,7 @@ oauth2:
 							"group": "group1",
 						},
 					},
+					Version: "v2.27.0",
 				},
 			},
 			sMons: map[string]*monitoringv1.ServiceMonitor{
@@ -3194,6 +3072,7 @@ oauth2:
 							"group": "group1",
 						},
 					},
+					Version: "v2.27.0",
 				},
 			},
 			pMons: map[string]*monitoringv1.PodMonitor{
@@ -3237,6 +3116,7 @@ oauth2:
 							"group": "group1",
 						},
 					},
+					Version: "v2.27.0",
 				},
 			},
 			probes: map[string]*monitoringv1.Probe{
@@ -3271,8 +3151,8 @@ oauth2:
 	for _, tt := range testCases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			cg := &ConfigGenerator{}
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, tt.p)
+			cfg, err := cg.Generate(
 				tt.p,
 				tt.sMons,
 				tt.pMons,
@@ -3302,7 +3182,7 @@ oauth2:
 
 func TestPodTargetLabels(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -3354,7 +3234,6 @@ func TestPodTargetLabels(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -3424,11 +3303,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -3441,7 +3315,7 @@ alerting:
 
 func TestPodTargetLabelsFromPodMonitor(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -3493,7 +3367,6 @@ func TestPodTargetLabelsFromPodMonitor(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: podMonitor/default/testpodmonitor1/0
   honor_labels: false
@@ -3544,11 +3417,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -3561,7 +3429,7 @@ alerting:
 
 func TestEmptyEndointPorts(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -3608,7 +3476,6 @@ func TestEmptyEndointPorts(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/test/0
   honor_labels: false
@@ -3666,11 +3533,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
@@ -3683,7 +3545,7 @@ alerting:
 func generateTestConfig(version string) ([]byte, error) {
 	cg := &ConfigGenerator{}
 	replicas := int32(1)
-	return cg.GenerateConfig(
+	return cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -4148,7 +4010,6 @@ func TestSampleLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -4208,11 +4069,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -4221,7 +4077,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -4282,11 +4137,6 @@ scrape_configs:
     action: keep
   sample_limit: %d
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -4358,7 +4208,7 @@ alerting:
 				serviceMonitor.Spec.SampleLimit = uint64(tc.limit)
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cfg, err := cg.Generate(
 				&prometheus,
 				map[string]*monitoringv1.ServiceMonitor{
 					"testservicemonitor1": &serviceMonitor,
@@ -4391,7 +4241,6 @@ func TestTargetLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -4451,11 +4300,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -4464,7 +4308,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -4525,11 +4368,6 @@ scrape_configs:
     action: keep
   target_limit: %d
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -4588,8 +4426,6 @@ alerting:
 		},
 	} {
 		t.Run(fmt.Sprintf("%s enforcedlimit(%d) limit(%d)", tc.version, tc.enforcedLimit, tc.limit), func(t *testing.T) {
-			cg := NewConfigGenerator(log.NewLogfmtLogger(os.Stdout))
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -4630,7 +4466,8 @@ alerting:
 				serviceMonitor.Spec.TargetLimit = uint64(tc.limit)
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				map[string]*monitoringv1.ServiceMonitor{
 					"testservicemonitor1": &serviceMonitor,
@@ -4679,13 +4516,7 @@ func TestRemoteReadConfig(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_read:
 - url: http://example.com
   remote_timeout: 30s
@@ -4715,13 +4546,7 @@ remote_read:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_read:
 - url: http://example.com
   remote_timeout: 30s
@@ -4746,13 +4571,7 @@ remote_read:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_read:
 - url: http://example.com
   remote_timeout: 30s
@@ -4776,8 +4595,6 @@ remote_read:
 		},
 	} {
 		t.Run(fmt.Sprintf("version=%s", tc.version), func(t *testing.T) {
-			cg := &ConfigGenerator{}
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -4794,7 +4611,8 @@ remote_read:
 				},
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				nil,
 				nil,
@@ -4865,13 +4683,7 @@ func TestRemoteWriteConfig(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -4910,13 +4722,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -4957,13 +4763,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -5005,13 +4805,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -5042,13 +4836,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -5081,13 +4869,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -5138,13 +4920,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 30s
@@ -5179,13 +4955,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 1s
@@ -5204,13 +4974,7 @@ remote_write:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 remote_write:
 - url: http://example.com
   remote_timeout: 1s
@@ -5241,10 +5005,45 @@ remote_write:
 			},
 			expectedErr: errors.New("invalid remoteWrite[0].metadataConfig.sendInterval value specified: not a valid duration string: \"1p\""),
 		},
+		{
+			version: "v2.30.0",
+			remoteWrite: monitoringv1.RemoteWriteSpec{
+				URL: "http://example.com",
+				QueueConfig: &monitoringv1.QueueConfig{
+					Capacity:          1000,
+					MinShards:         1,
+					MaxShards:         10,
+					MaxSamplesPerSend: 100,
+					BatchSendDeadline: "20s",
+					MaxRetries:        3,
+					MinBackoff:        "1s",
+					MaxBackoff:        "10s",
+					RetryOnRateLimit:  true,
+				},
+			},
+			expected: `global:
+  evaluation_interval: 30s
+  scrape_interval: 30s
+  external_labels:
+    prometheus: default/test
+    prometheus_replica: $(POD_NAME)
+scrape_configs: []
+remote_write:
+- url: http://example.com
+  remote_timeout: 30s
+  queue_config:
+    capacity: 1000
+    min_shards: 1
+    max_shards: 10
+    max_samples_per_send: 100
+    batch_send_deadline: 20s
+    min_backoff: 1s
+    max_backoff: 10s
+    retry_on_http_429: true
+`,
+		},
 	} {
 		t.Run(fmt.Sprintf("version=%s", tc.version), func(t *testing.T) {
-			cg := &ConfigGenerator{}
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -5282,7 +5081,8 @@ remote_write:
 				}
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				nil,
 				nil,
@@ -5316,7 +5116,6 @@ func TestLabelLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -5376,11 +5175,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -5389,7 +5183,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -5450,11 +5243,6 @@ scrape_configs:
     action: keep
   label_limit: %d
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -5513,8 +5301,6 @@ alerting:
 		},
 	} {
 		t.Run(fmt.Sprintf("%s enforcedLabelLimit(%d) labelLimit(%d)", tc.version, tc.enforcedLabelLimit, tc.labelLimit), func(t *testing.T) {
-			cg := NewConfigGenerator(log.NewLogfmtLogger(os.Stdout))
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -5529,6 +5315,7 @@ alerting:
 					},
 				},
 			}
+
 			if tc.enforcedLabelLimit >= 0 {
 				i := uint64(tc.enforcedLabelLimit)
 				prometheus.Spec.EnforcedLabelLimit = &i
@@ -5555,7 +5342,9 @@ alerting:
 				serviceMonitor.Spec.LabelLimit = uint64(tc.labelLimit)
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+
+			cfg, err := cg.Generate(
 				&prometheus,
 				map[string]*monitoringv1.ServiceMonitor{
 					"testservicemonitor1": &serviceMonitor,
@@ -5588,7 +5377,6 @@ func TestLabelNameLengthLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: podMonitor/default/testpodmonitor1/0
   honor_labels: false
@@ -5629,11 +5417,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -5642,7 +5425,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: podMonitor/default/testpodmonitor1/0
   honor_labels: false
@@ -5684,11 +5466,6 @@ scrape_configs:
     action: keep
   label_name_length_limit: %d
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -5747,8 +5524,6 @@ alerting:
 		},
 	} {
 		t.Run(fmt.Sprintf("%s enforcedLabelNameLengthLimit(%d) labelNameLengthLimit(%d)", tc.version, tc.enforcedLabelNameLengthLimit, tc.labelNameLengthLimit), func(t *testing.T) {
-			cg := NewConfigGenerator(log.NewLogfmtLogger(os.Stdout))
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -5763,6 +5538,7 @@ alerting:
 					},
 				},
 			}
+
 			if tc.enforcedLabelNameLengthLimit >= 0 {
 				i := uint64(tc.enforcedLabelNameLengthLimit)
 				prometheus.Spec.EnforcedLabelNameLengthLimit = &i
@@ -5789,7 +5565,8 @@ alerting:
 				podMonitor.Spec.LabelNameLengthLimit = uint64(tc.labelNameLengthLimit)
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				nil,
 				map[string]*monitoringv1.PodMonitor{
@@ -5822,7 +5599,6 @@ func TestLabelValueLengthLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -5852,11 +5628,6 @@ scrape_configs:
   - target_label: __address__
     replacement: blackbox.exporter.io
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -5865,7 +5636,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: probe/default/testprobe1
   honor_timestamps: true
@@ -5896,11 +5666,6 @@ scrape_configs:
   - target_label: __address__
     replacement: blackbox.exporter.io
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -5959,8 +5724,6 @@ alerting:
 		},
 	} {
 		t.Run(fmt.Sprintf("%s enforcedLabelValueLengthLimit(%d) labelValueLengthLimit(%d)", tc.version, tc.enforcedLabelValueLengthLimit, tc.labelValueLengthLimit), func(t *testing.T) {
-			cg := NewConfigGenerator(log.NewLogfmtLogger(os.Stdout))
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -6013,7 +5776,8 @@ alerting:
 				probe.Spec.LabelValueLengthLimit = uint64(tc.labelValueLengthLimit)
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				nil,
 				nil,
@@ -6046,7 +5810,6 @@ func TestBodySizeLimits(t *testing.T) {
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -6106,11 +5869,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	expectLimit := `global:
@@ -6119,7 +5877,6 @@ alerting:
   external_labels:
     prometheus: default/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/testservicemonitor1/0
   honor_labels: false
@@ -6180,11 +5937,6 @@ scrape_configs:
     action: keep
   body_size_limit: %s
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	for _, tc := range []struct {
@@ -6230,8 +5982,6 @@ alerting:
 		},
 	} {
 		t.Run(fmt.Sprintf("%s enforcedBodySizeLimit(%s)", tc.version, tc.enforcedBodySizeLimit), func(t *testing.T) {
-			cg := NewConfigGenerator(log.NewLogfmtLogger(os.Stdout))
-
 			prometheus := monitoringv1.Prometheus{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
@@ -6269,7 +6019,8 @@ alerting:
 				},
 			}
 
-			cfg, err := cg.GenerateConfig(
+			cg := mustNewConfigGenerator(t, &prometheus)
+			cfg, err := cg.Generate(
 				&prometheus,
 				map[string]*monitoringv1.ServiceMonitor{
 					"testservicemonitor1": &serviceMonitor,
@@ -6301,7 +6052,7 @@ alerting:
 
 func TestMatchExpressionsServiceMonitor(t *testing.T) {
 	cg := &ConfigGenerator{}
-	cfg, err := cg.GenerateConfig(
+	cfg, err := cg.Generate(
 		&monitoringv1.Prometheus{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test",
@@ -6351,7 +6102,6 @@ func TestMatchExpressionsServiceMonitor(t *testing.T) {
   external_labels:
     prometheus: ns-value/test
     prometheus_replica: $(POD_NAME)
-rule_files: []
 scrape_configs:
 - job_name: serviceMonitor/default/test/0
   honor_labels: false
@@ -6416,11 +6166,6 @@ scrape_configs:
     regex: $(SHARD)
     action: keep
   metric_relabel_configs: []
-alerting:
-  alert_relabel_configs:
-  - action: labeldrop
-    regex: prometheus_replica
-  alertmanagers: []
 `
 
 	result := string(cfg)
