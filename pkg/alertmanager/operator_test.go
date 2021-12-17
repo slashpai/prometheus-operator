@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	v1 "k8s.io/api/core/v1"
@@ -38,6 +39,11 @@ func strPtr(str string) *string {
 }
 
 func TestCheckAlertmanagerConfig(t *testing.T) {
+	version, err := semver.ParseTolerant(operator.DefaultAlertmanagerVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	c := fake.NewSimpleClientset(
 		&v1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
@@ -45,7 +51,7 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 				Namespace: "ns1",
 			},
 			Data: map[string][]byte{
-				"key1": []byte("val1"),
+				"key1": []byte("https://val1.com"),
 			},
 		},
 	)
@@ -801,7 +807,7 @@ func TestCheckAlertmanagerConfig(t *testing.T) {
 	} {
 		t.Run(tc.amConfig.Name, func(t *testing.T) {
 			store := assets.NewStore(c.CoreV1(), c.CoreV1())
-			err := checkAlertmanagerConfig(context.Background(), tc.amConfig, store)
+			err := checkAlertmanagerConfigResource(context.Background(), tc.amConfig, version, store)
 			if tc.ok {
 				if err != nil {
 					t.Fatalf("expecting no error but got %q", err)
