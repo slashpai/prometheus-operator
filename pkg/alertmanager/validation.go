@@ -28,7 +28,11 @@ import (
 
 var durationRe = regexp.MustCompile(`^(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?$`)
 
-func ValidateConfig(amc *monitoringv1alpha1.AlertmanagerConfig) error {
+// ValidateAlertmanagerConfig checks that the given resource complies with the
+// semantics of the Alertmanager configuration.
+// In particular, it verifies things that can't be modelized with the OpenAPI
+// specification such as routes should refer to an existing receiver..
+func ValidateAlertmanagerConfig(amc *monitoringv1alpha1.AlertmanagerConfig) error {
 	receivers, err := validateReceivers(amc.Spec.Receivers)
 	if err != nil {
 		return err
@@ -87,7 +91,6 @@ func validateReceivers(receivers []monitoringv1alpha1.Receiver) (map[string]stru
 
 		if err := validateEmailConfig(receiver.EmailConfigs); err != nil {
 			return nil, errors.Wrapf(err, "failed to validate 'emailConfig' - receiver %s", receiver.Name)
-
 		}
 
 		if err := validateVictorOpsConfigs(receiver.VictorOpsConfigs); err != nil {
@@ -96,6 +99,10 @@ func validateReceivers(receivers []monitoringv1alpha1.Receiver) (map[string]stru
 
 		if err := validatePushoverConfigs(receiver.PushoverConfigs); err != nil {
 			return nil, errors.Wrapf(err, "failed to validate 'pushOverConfig' - receiver %s", receiver.Name)
+		}
+
+		if err := validateSnsConfigs(receiver.SNSConfigs); err != nil {
+			return nil, errors.Wrapf(err, "failed to validate 'snsConfig' - receiver %s", receiver.Name)
 		}
 	}
 
@@ -241,6 +248,15 @@ func validatePushoverConfigs(configs []monitoringv1alpha1.PushoverConfig) error 
 	return nil
 }
 
+func validateSnsConfigs(configs []monitoringv1alpha1.SNSConfig) error {
+	for _, config := range configs {
+		if (config.TargetARN == "") != (config.TopicARN == "") != (config.PhoneNumber == "") {
+			return fmt.Errorf("must provide either a Target ARN, Topic ARN, or Phone Number for SNS config")
+		}
+	}
+	return nil
+}
+
 // validateAlertManagerRoutes verifies that the given route and all its children are semantically valid.
 // because of the self-referential issues mentioned in https://github.com/kubernetes/kubernetes/issues/62872
 // it is not currently possible to apply OpenAPI validation to a v1alpha1.Route
@@ -249,8 +265,14 @@ func validateAlertManagerRoutes(r *monitoringv1alpha1.Route, receivers, muteTime
 		return nil
 	}
 
-	if _, found := receivers[r.Receiver]; !found && (r.Receiver != "" || topLevelRoute) {
-		return errors.Errorf("receiver %q not found", r.Receiver)
+	if r.Receiver == "" {
+		if topLevelRoute {
+			return errors.Errorf("root route must define a receiver")
+		}
+	} else {
+		if _, found := receivers[r.Receiver]; !found {
+			return errors.Errorf("receiver %q not found", r.Receiver)
+		}
 	}
 
 	if groupLen := len(r.GroupBy); groupLen > 0 {

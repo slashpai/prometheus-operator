@@ -96,10 +96,10 @@ type receiver struct {
 	SlackConfigs     []*slackConfig     `yaml:"slack_configs,omitempty" json:"slack_configs,omitempty"`
 	WebhookConfigs   []*webhookConfig   `yaml:"webhook_configs,omitempty" json:"webhook_configs,omitempty"`
 	WeChatConfigs    []*weChatConfig    `yaml:"wechat_configs,omitempty" json:"wechat_config,omitempty"`
-	// TODO(simonpasquier): support the following receivers with AlertmanagerConfig.
 	EmailConfigs     []*emailConfig     `yaml:"email_configs,omitempty" json:"email_configs,omitempty"`
 	PushoverConfigs  []*pushoverConfig  `yaml:"pushover_configs,omitempty" json:"pushover_configs,omitempty"`
 	VictorOpsConfigs []*victorOpsConfig `yaml:"victorops_configs,omitempty" json:"victorops_configs,omitempty"`
+	SNSConfigs       []*snsConfig       `yaml:"sns_configs,omitempty" json:"sns_configs,omitempty"`
 }
 
 type webhookConfig struct {
@@ -185,10 +185,12 @@ type slackConfig struct {
 type httpClientConfig struct {
 	Authorization   *authorization `yaml:"authorization,omitempty"`
 	BasicAuth       *basicAuth     `yaml:"basic_auth,omitempty"`
+	OAuth2          *oauth2        `yaml:"oauth2,omitempty"`
 	BearerToken     string         `yaml:"bearer_token,omitempty"`
 	BearerTokenFile string         `yaml:"bearer_token_file,omitempty"`
 	ProxyURL        string         `yaml:"proxy_url,omitempty"`
 	TLSConfig       tlsConfig      `yaml:"tls_config,omitempty"`
+	FollowRedirects bool           `yaml:"follow_redirects"`
 }
 
 type tlsConfig struct {
@@ -209,6 +211,17 @@ type basicAuth struct {
 	Username     string `yaml:"username"`
 	Password     string `yaml:"password,omitempty"`
 	PasswordFile string `yaml:"password_file,omitempty"`
+}
+
+type oauth2 struct {
+	ClientID         string            `yaml:"client_id"`
+	ClientSecret     string            `yaml:"client_secret"`
+	ClientSecretFile string            `yaml:"client_secret_file"`
+	Scopes           []string          `yaml:"scopes,omitempty"`
+	TokenURL         string            `yaml:"token_url"`
+	EndpointParams   map[string]string `yaml:"endpoint_params,omitempty"`
+
+	TLSConfig *tlsConfig `yaml:"tls_config,omitempty"`
 }
 
 type pagerdutyLink struct {
@@ -283,6 +296,27 @@ type pushoverConfig struct {
 	Retry         duration          `yaml:"retry,omitempty" json:"retry,omitempty"`
 	Expire        duration          `yaml:"expire,omitempty" json:"expire,omitempty"`
 	HTML          bool              `yaml:"html,omitempty" json:"html,omitempty"`
+}
+
+type snsConfig struct {
+	VSendResolved *bool             `yaml:"send_resolved,omitempty" json:"send_resolved,omitempty"`
+	HTTPConfig    *httpClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
+	APIUrl        string            `yaml:"api_url,omitempty" json:"api_url,omitempty"`
+	Sigv4         sigV4Config       `yaml:"sigv4,omitempty" json:"sigv4,omitempty"`
+	TopicARN      string            `yaml:"topic_arn,omitempty" json:"topic_arn,omitempty"`
+	PhoneNumber   string            `yaml:"phone_number,omitempty" json:"phone_number,omitempty"`
+	TargetARN     string            `yaml:"target_arn,omitempty" json:"target_arn,omitempty"`
+	Subject       string            `yaml:"subject,omitempty" json:"subject,omitempty"`
+	Message       string            `yaml:"message,omitempty" json:"message,omitempty"`
+	Attributes    map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+}
+
+type sigV4Config struct {
+	Region    string `yaml:"region,omitempty" json:"region,omitempty"`
+	AccessKey string `yaml:"access_key,omitempty" json:"access_key,omitempty"`
+	SecretKey string `yaml:"secret_key,omitempty" json:"secret_key,omitempty"`
+	Profile   string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	RoleARN   string `yaml:"role_arn,omitempty" json:"role_arn,omitempty"`
 }
 
 type duration time.Duration

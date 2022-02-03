@@ -270,12 +270,12 @@ func (cg *configGenerator) enforceNamespaceForRoute(r *route, namespace string) 
 func (cg *configGenerator) getValidURLFromSecret(ctx context.Context, namespace string, selector v1.SecretKeySelector) (string, error) {
 	url, err := cg.store.GetSecretKey(ctx, namespace, selector)
 	if err != nil {
-		return "", errors.Errorf("failed to get key %q from secret %q", selector.Key, selector.Name)
+		return "", errors.Wrap(err, "failed to get URL")
 	}
 
 	url = strings.TrimSpace(url)
 	if _, err := ValidateURL(url); err != nil {
-		return url, errors.Wrapf(err, "invalid url %s in secret %s config", url, selector.Name)
+		return url, errors.Wrapf(err, "invalid URL %q in key %q from secret %q", url, selector.Key, selector.Name)
 	}
 	return url, nil
 }
@@ -439,6 +439,18 @@ func (cg *configGenerator) convertReceiver(ctx context.Context, in *monitoringv1
 		}
 	}
 
+	var snsConfigs []*snsConfig
+	if l := len(in.SNSConfigs); l > 0 {
+		snsConfigs = make([]*snsConfig, l)
+		for i := range in.SNSConfigs {
+			receiver, err := cg.convertSnsConfig(ctx, in.SNSConfigs[i], crKey)
+			if err != nil {
+				return nil, errors.Wrapf(err, "SNSConfig[%d]", i)
+			}
+			snsConfigs[i] = receiver
+		}
+	}
+
 	return &receiver{
 		Name:             makeNamespacedString(in.Name, crKey),
 		OpsgenieConfigs:  opsgenieConfigs,
@@ -449,6 +461,7 @@ func (cg *configGenerator) convertReceiver(ctx context.Context, in *monitoringv1
 		EmailConfigs:     emailConfigs,
 		VictorOpsConfigs: victorOpsConfigs,
 		PushoverConfigs:  pushoverConfigs,
+		SNSConfigs:       snsConfigs,
 	}, nil
 }
 
@@ -587,7 +600,7 @@ func (cg *configGenerator) convertPagerdutyConfig(ctx context.Context, in monito
 	if in.RoutingKey != nil {
 		routingKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.RoutingKey)
 		if err != nil {
-			return nil, errors.Errorf("failed to get routing key %q from secret %q", in.RoutingKey.Key, in.RoutingKey.Name)
+			return nil, errors.Wrap(err, "failed to get routing key")
 		}
 		out.RoutingKey = routingKey
 	}
@@ -595,7 +608,7 @@ func (cg *configGenerator) convertPagerdutyConfig(ctx context.Context, in monito
 	if in.ServiceKey != nil {
 		serviceKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.ServiceKey)
 		if err != nil {
-			return nil, errors.Errorf("failed to get service key %q from secret %q", in.ServiceKey.Key, in.ServiceKey.Name)
+			return nil, errors.Wrap(err, "failed to get service key")
 		}
 		out.ServiceKey = serviceKey
 	}
@@ -660,7 +673,7 @@ func (cg *configGenerator) convertOpsgenieConfig(ctx context.Context, in monitor
 	if in.APIKey != nil {
 		apiKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.APIKey)
 		if err != nil {
-			return nil, errors.Errorf("failed to get api key %q from secret %q", in.APIKey.Key, in.APIKey.Name)
+			return nil, errors.Wrap(err, "failed to get API key")
 		}
 		out.APIKey = apiKey
 	}
@@ -717,7 +730,7 @@ func (cg *configGenerator) convertWeChatConfig(ctx context.Context, in monitorin
 	if in.APISecret != nil {
 		apiSecret, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.APISecret)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.APISecret)
+			return nil, errors.Wrap(err, "failed to get API secret")
 		}
 		out.APISecret = apiSecret
 	}
@@ -753,7 +766,7 @@ func (cg *configGenerator) convertEmailConfig(ctx context.Context, in monitoring
 	if in.AuthPassword != nil {
 		authPassword, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.AuthPassword)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.AuthPassword)
+			return nil, errors.Wrap(err, "failed to get auth password")
 		}
 		out.AuthPassword = authPassword
 	}
@@ -761,7 +774,7 @@ func (cg *configGenerator) convertEmailConfig(ctx context.Context, in monitoring
 	if in.AuthSecret != nil {
 		authSecret, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.AuthSecret)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.AuthSecret)
+			return nil, errors.Wrap(err, "failed to get auth secret")
 		}
 		out.AuthSecret = authSecret
 	}
@@ -795,7 +808,7 @@ func (cg *configGenerator) convertVictorOpsConfig(ctx context.Context, in monito
 	if in.APIKey != nil {
 		apiKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.APIKey)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.APIKey)
+			return nil, errors.Wrap(err, "failed to get API key")
 		}
 		out.APIKey = apiKey
 	}
@@ -846,7 +859,7 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 	{
 		userKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.UserKey)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.UserKey)
+			return nil, errors.Wrap(err, "failed to get user key")
 		}
 		if userKey == "" {
 			return nil, errors.Errorf("mandatory field %q is empty", "userKey")
@@ -857,7 +870,7 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 	{
 		token, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.Token)
 		if err != nil {
-			return nil, errors.Errorf("failed to get secret %q", in.Token)
+			return nil, errors.Wrap(err, "failed to get token")
 		}
 		if token == "" {
 			return nil, errors.Errorf("mandatory field %q is empty", "token")
@@ -888,6 +901,49 @@ func (cg *configGenerator) convertPushoverConfig(ctx context.Context, in monitor
 	return out, nil
 }
 
+func (cg *configGenerator) convertSnsConfig(ctx context.Context, in monitoringv1alpha1.SNSConfig, crKey types.NamespacedName) (*snsConfig, error) {
+	out := &snsConfig{
+		VSendResolved: in.SendResolved,
+		APIUrl:        in.ApiURL,
+		TopicARN:      in.TopicARN,
+		PhoneNumber:   in.PhoneNumber,
+		TargetARN:     in.TargetARN,
+		Subject:       in.Subject,
+		Message:       in.Message,
+		Attributes:    in.Attributes,
+	}
+
+	if in.HTTPConfig != nil {
+		httpConfig, err := cg.convertHTTPConfig(ctx, *in.HTTPConfig, crKey)
+		if err != nil {
+			return nil, err
+		}
+		out.HTTPConfig = httpConfig
+	}
+
+	if in.Sigv4 != nil {
+		accessKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.Sigv4.AccessKey)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get access key")
+		}
+
+		secretKey, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.Sigv4.SecretKey)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get AWS secret key")
+
+		}
+
+		out.Sigv4 = sigV4Config{
+			Region:    in.Sigv4.Region,
+			AccessKey: accessKey,
+			SecretKey: secretKey,
+			Profile:   in.Sigv4.Profile,
+			RoleARN:   in.Sigv4.RoleArn,
+		}
+	}
+
+	return out, nil
+}
 func (cg *configGenerator) convertInhibitRule(in *monitoringv1alpha1.InhibitRule) *inhibitRule {
 	matchersV2Allowed := cg.amVersion.GTE(semver.MustParse("0.22.0"))
 	var sourceMatchers []string
@@ -1044,12 +1100,12 @@ func (cg *configGenerator) convertHTTPConfig(ctx context.Context, in monitoringv
 	if in.BasicAuth != nil {
 		username, err := cg.store.GetSecretKey(ctx, crKey.Namespace, in.BasicAuth.Username)
 		if err != nil {
-			return nil, errors.Errorf("failed to get BasicAuth username key %q from secret %q", in.BasicAuth.Username.Key, in.BasicAuth.Username.Name)
+			return nil, errors.Wrap(err, "failed to get BasicAuth username")
 		}
 
 		password, err := cg.store.GetSecretKey(ctx, crKey.Namespace, in.BasicAuth.Password)
 		if err != nil {
-			return nil, errors.Errorf("failed to get BasicAuth password key %q from secret %q", in.BasicAuth.Password.Key, in.BasicAuth.Password.Name)
+			return nil, errors.Wrap(err, "failed to get BasicAuth password")
 		}
 
 		if username != "" || password != "" {
@@ -1060,7 +1116,7 @@ func (cg *configGenerator) convertHTTPConfig(ctx context.Context, in monitoringv
 	if in.Authorization != nil {
 		credentials, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.Authorization.Credentials)
 		if err != nil {
-			return nil, errors.Errorf("failed to get Authorization credentials key %q from secret %q", in.Authorization.Credentials.Key, in.Authorization.Credentials.Name)
+			return nil, errors.Wrap(err, "failed to get Authorization credentials")
 		}
 
 		if credentials != "" {
@@ -1079,7 +1135,7 @@ func (cg *configGenerator) convertHTTPConfig(ctx context.Context, in monitoringv
 	if in.BearerTokenSecret != nil {
 		bearerToken, err := cg.store.GetSecretKey(ctx, crKey.Namespace, *in.BearerTokenSecret)
 		if err != nil {
-			return nil, errors.Errorf("failed to get bearer token key %q from secret %q", in.BearerTokenSecret.Key, in.BearerTokenSecret.Name)
+			return nil, errors.Wrap(err, "failed to get bearer token")
 		}
 		out.BearerToken = bearerToken
 	}

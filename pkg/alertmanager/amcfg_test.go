@@ -25,6 +25,7 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"github.com/google/go-cmp/cmp"
+	monitoringingv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/assets"
 	"github.com/prometheus/alertmanager/config"
@@ -251,6 +252,53 @@ mute_time_intervals:
       end_time: "24:00"
     days_of_month: ["7", "18", "28"]
     months: ["1"]
+templates: []
+`,
+		},
+		{
+			name:    "skeleton base with sns receiver, no CRs",
+			kclient: fake.NewSimpleClientset(),
+			baseConfig: alertmanagerConfig{
+				Route: &route{Receiver: "sns-test"},
+				Receivers: []*receiver{
+					{
+						Name: "sns-test",
+						SNSConfigs: []*snsConfig{
+							{
+								APIUrl:      "https://sns.us-west-2.amazonaws.com",
+								TopicARN:    "arn:test",
+								PhoneNumber: "+12345",
+								TargetARN:   "arn:target",
+								Subject:     "testing",
+								Sigv4: sigV4Config{
+									Region:    "us-west-2",
+									AccessKey: "key",
+									SecretKey: "secret",
+									Profile:   "dev",
+									RoleARN:   "arn:dev",
+								},
+							},
+						},
+					},
+				},
+			},
+			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{},
+			expected: `route:
+  receiver: sns-test
+receivers:
+- name: sns-test
+  sns_configs:
+  - api_url: https://sns.us-west-2.amazonaws.com
+    sigv4:
+      region: us-west-2
+      access_key: key
+      secret_key: secret
+      profile: dev
+      role_arn: arn:dev
+    topic_arn: arn:test
+    phone_number: "+12345"
+    target_arn: arn:target
+    subject: testing
 templates: []
 `,
 		},
@@ -933,6 +981,83 @@ receivers:
       name: my-action
       confirm:
         text: text
+templates: []
+`,
+		},
+		{
+
+			name: "CR with SNS Receiver",
+			kclient: fake.NewSimpleClientset(
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "am-sns-test",
+						Namespace: "mynamespace",
+					},
+					Data: map[string][]byte{
+						"key":    []byte("xyz"),
+						"secret": []byte("123"),
+					},
+				}),
+			baseConfig: alertmanagerConfig{
+				Route: &route{
+					Receiver: "null",
+				},
+				Receivers: []*receiver{{Name: "null"}},
+			},
+			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{
+				"mynamespace": {
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "myamc",
+						Namespace: "mynamespace",
+					},
+					Spec: monitoringv1alpha1.AlertmanagerConfigSpec{
+						Route: &monitoringv1alpha1.Route{
+							Receiver: "test",
+						},
+						Receivers: []monitoringv1alpha1.Receiver{{
+							Name: "test",
+							SNSConfigs: []monitoringv1alpha1.SNSConfig{
+								{
+									ApiURL: "https://sns.us-east-2.amazonaws.com",
+									Sigv4: &monitoringingv1.Sigv4{
+										Region: "us-east-2",
+										AccessKey: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{
+												Name: "am-sns-test",
+											},
+											Key: "key",
+										},
+										SecretKey: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{
+												Name: "am-sns-test",
+											},
+											Key: "secret",
+										},
+									},
+									TopicARN: "test-topicARN",
+								},
+							},
+						}},
+					},
+				},
+			},
+			expected: `route:
+  receiver: "null"
+  routes:
+  - receiver: mynamespace-myamc-test
+    matchers:
+    - namespace="mynamespace"
+    continue: true
+receivers:
+- name: "null"
+- name: mynamespace-myamc-test
+  sns_configs:
+  - api_url: https://sns.us-east-2.amazonaws.com
+    sigv4:
+      region: us-east-2
+      access_key: xyz
+      secret_key: "123"
+    topic_arn: test-topicARN
 templates: []
 `,
 		},

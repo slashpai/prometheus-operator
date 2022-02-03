@@ -171,7 +171,7 @@ Opstrace installations use the Prometheus Operator internally to collect metrics
 
 ## Polar Signals
 
-[polarsignals.com](https://polarsignals.com/)
+[polarsignals.com](https://www.polarsignals.com/)
 
 Environment: Google Cloud
 
@@ -181,6 +181,26 @@ Details:
 - HA Pair of Prometheus
 - 4000 samples/s
 - 100k active series
+
+## Robusta
+
+[Robusta docs](https://docs.robusta.dev/master/)
+
+Environments: EKS, GKE, AKS, and self-hosted Kubernetes
+
+Uses [kube-prometheus](https://github.com/prometheus-operator/kube-prometheus): Yes
+
+We're an open source project that builds upon the awesome Prometheus Operator. We run automated playbooks in response to Prometheus alerts and other events in your cluster. For example, you can automatically fetch logs and send them to Slack when a Prometheus alert occurs. All it takes is this YAML:
+
+```yaml
+triggers:
+  - on_prometheus_alert:
+      alert_name: KubePodCrashLooping
+actions:
+  - logs_enricher: {}
+sinks:
+  - slack
+```
 
 ## Skyscanner
 
