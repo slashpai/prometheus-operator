@@ -119,6 +119,17 @@ prometheus-config-reloader-no-deps:
 		-X $(PROMETHEUS_COMMON_PKG)/version.Version=$(shell cat VERSION)" \
 	-o prometheus-config-reloader cmd/prometheus-config-reloader/main.go
 
+.PHONY: prometheus-admission-webhook-no-deps
+prometheus-admission-webhook-no-deps:
+	GOOS=linux CGO_ENABLED=0 go build \
+	-mod=vendor \
+	-ldflags="-s -X $(PROMETHEUS_COMMON_PKG)/version.Revision=$(shell git rev-parse --short HEAD)  \
+		-X $(PROMETHEUS_COMMON_PKG)/version.BuildUser=$(shell whoami)  \
+		-X $(PROMETHEUS_COMMON_PKG)/version.BuildDate=$(shell date +"%Y%m%d-%T") \
+		-X $(PROMETHEUS_COMMON_PKG)/version.Branch=$(shell git rev-parse --abbrev-ref HEAD) \
+		-X $(PROMETHEUS_COMMON_PKG)/version.Version=$(shell cat VERSION)" \
+	-o prometheus-admision-webhook cmd/admission-webhook/main.go
+
 .PHONY: prometheus-config-reloader
 prometheus-config-reloader:
 	$(GO_BUILD_RECIPE) -o $@ cmd/$@/main.go
