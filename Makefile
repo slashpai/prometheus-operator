@@ -128,7 +128,7 @@ prometheus-admission-webhook-no-deps:
 		-X $(PROMETHEUS_COMMON_PKG)/version.BuildDate=$(shell date +"%Y%m%d-%T") \
 		-X $(PROMETHEUS_COMMON_PKG)/version.Branch=$(shell git rev-parse --abbrev-ref HEAD) \
 		-X $(PROMETHEUS_COMMON_PKG)/version.Version=$(shell cat VERSION)" \
-	-o prometheus-admision-webhook cmd/admission-webhook/main.go
+	-o prometheus-admission-webhook cmd/admission-webhook/main.go
 
 .PHONY: prometheus-config-reloader
 prometheus-config-reloader:
