@@ -59,23 +59,33 @@ func alertmanagerConfigFrom(s string) (*alertmanagerConfig, error) {
 		return nil, err
 	}
 
-	rootRoute := cfg.Route
+	if err := checkAlertmanagerConfigRootRoute(cfg.Route); err != nil {
+		return nil, errors.Wrap(err, "check AlertmanagerConfig root route failed")
+	}
+	return cfg, nil
+}
+
+func checkAlertmanagerConfigRootRoute(rootRoute *route) error {
 	if rootRoute == nil {
-		return nil, errors.New("root route must exist")
+		return errors.New("root route must exist")
+	}
+
+	if rootRoute.Continue {
+		return errors.New("cannot have continue in root route")
 	}
 
 	if rootRoute.Receiver == "" {
-		return nil, errors.New("root route's receiver must exist")
+		return errors.New("root route's receiver must exist")
 	}
 
 	if len(rootRoute.Matchers) > 0 || len(rootRoute.Match) > 0 || len(rootRoute.MatchRE) > 0 {
-		return nil, errors.New("'matchers' not permitted on root route")
+		return errors.New("'matchers' not permitted on root route")
 	}
 
 	if len(rootRoute.MuteTimeIntervals) > 0 {
-		return nil, errors.New("'mute_time_intervals' not permitted on root route")
+		return errors.New("'mute_time_intervals' not permitted on root route")
 	}
-	return cfg, nil
+	return nil
 }
 
 func (c alertmanagerConfig) String() string {
@@ -126,6 +136,48 @@ func validateConfigInputs(am *monitoringv1.Alertmanager) error {
 		}
 	}
 	return nil
+}
+
+func (cg *configGenerator) generateGlobalConfig(
+	ctx context.Context,
+	amConfig *monitoringv1alpha1.AlertmanagerConfig,
+) (*alertmanagerConfig, error) {
+	globalAlertmanagerConfig := &alertmanagerConfig{}
+	crKey := types.NamespacedName{
+		Namespace: amConfig.Namespace,
+		Name:      amConfig.Name,
+	}
+	// Add inhibitRules to globalAlertmanagerConfig.InhibitRules without enforce namespace
+	for _, inhibitRule := range amConfig.Spec.InhibitRules {
+		globalAlertmanagerConfig.InhibitRules = append(globalAlertmanagerConfig.InhibitRules, cg.convertInhibitRule(&inhibitRule))
+	}
+
+	// Add routes to globalAlertmanagerConfig.Route without enforce namespace
+	globalAlertmanagerConfig.Route = cg.convertRoute(amConfig.Spec.Route, crKey)
+
+	for _, receiver := range amConfig.Spec.Receivers {
+		receivers, err := cg.convertReceiver(ctx, &receiver, crKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "AlertmanagerConfig %s", crKey.String())
+		}
+		globalAlertmanagerConfig.Receivers = append(globalAlertmanagerConfig.Receivers, receivers)
+	}
+
+	for _, muteTimeInterval := range amConfig.Spec.MuteTimeIntervals {
+		mti, err := convertMuteTimeInterval(&muteTimeInterval, crKey)
+		if err != nil {
+			return nil, errors.Wrapf(err, "AlertmanagerConfig %s", crKey.String())
+		}
+		globalAlertmanagerConfig.MuteTimeIntervals = append(globalAlertmanagerConfig.MuteTimeIntervals, mti)
+	}
+
+	if err := globalAlertmanagerConfig.sanitize(cg.amVersion, cg.logger); err != nil {
+		return nil, err
+	}
+	if err := checkAlertmanagerConfigRootRoute(globalAlertmanagerConfig.Route); err != nil {
+		return nil, errors.Wrap(err, "check AlertmanagerConfig root route failed")
+	}
+	return globalAlertmanagerConfig, nil
 }
 
 func (cg *configGenerator) generateConfig(
@@ -1089,12 +1141,13 @@ func makeNamespacedString(in string, crKey types.NamespacedName) string {
 	if in == "" {
 		return ""
 	}
-	return crKey.Namespace + "-" + crKey.Name + "-" + in
+	return crKey.Namespace + "/" + crKey.Name + "/" + in
 }
 
 func (cg *configGenerator) convertHTTPConfig(ctx context.Context, in monitoringv1alpha1.HTTPConfig, crKey types.NamespacedName) (*httpClientConfig, error) {
 	out := &httpClientConfig{
-		ProxyURL: in.ProxyURL,
+		ProxyURL:        in.ProxyURL,
+		FollowRedirects: in.FollowRedirects,
 	}
 
 	if in.BasicAuth != nil {
@@ -1140,6 +1193,25 @@ func (cg *configGenerator) convertHTTPConfig(ctx context.Context, in monitoringv
 		out.BearerToken = bearerToken
 	}
 
+	if in.OAuth2 != nil {
+		clientID, err := cg.store.GetKey(ctx, crKey.Namespace, in.OAuth2.ClientID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get clientID")
+		}
+
+		clientSecret, err := cg.store.GetSecretKey(ctx, crKey.Namespace, in.OAuth2.ClientSecret)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get client secret")
+		}
+		out.OAuth2 = &oauth2{
+			ClientID:       clientID,
+			ClientSecret:   clientSecret,
+			Scopes:         in.OAuth2.Scopes,
+			TokenURL:       in.OAuth2.TokenURL,
+			EndpointParams: in.OAuth2.EndpointParams,
+		}
+	}
+
 	return out, nil
 }
 
@@ -1171,10 +1243,14 @@ func (c *alertmanagerConfig) sanitize(amVersion semver.Version, logger log.Logge
 		return nil
 	}
 
-	c.Global.sanitize(amVersion, logger)
+	if err := c.Global.sanitize(amVersion, logger); err != nil {
+		return err
+	}
 
 	for _, receiver := range c.Receivers {
-		receiver.sanitize(amVersion, logger)
+		if err := receiver.sanitize(amVersion, logger); err != nil {
+			return err
+		}
 	}
 
 	for i, rule := range c.InhibitRules {
@@ -1193,13 +1269,15 @@ func (c *alertmanagerConfig) sanitize(amVersion semver.Version, logger log.Logge
 }
 
 // sanitize globalConfig
-func (gc *globalConfig) sanitize(amVersion semver.Version, logger log.Logger) {
+func (gc *globalConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
 	if gc == nil {
-		return
+		return nil
 	}
 
 	if gc.HTTPConfig != nil {
-		gc.HTTPConfig.sanitize(amVersion, logger)
+		if err := gc.HTTPConfig.sanitize(amVersion, logger); err != nil {
+			return err
+		}
 	}
 
 	// We need to sanitize the config for slack globally
@@ -1219,88 +1297,109 @@ func (gc *globalConfig) sanitize(amVersion semver.Version, logger log.Logger) {
 			gc.SlackAPIURLFile = ""
 		}
 	}
+	return nil
 }
 
 // sanitize httpClientConfig
-func (hc *httpClientConfig) sanitize(amVersion semver.Version, logger log.Logger) {
+func (hc *httpClientConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
 	if hc == nil {
-		return
-	}
-	// we don't need to do any sanitization in this case and return early
-	if hc.Authorization == nil {
-		return
+		return nil
 	}
 
-	if hc.BasicAuth != nil {
-		msg := "'basicAuth' and 'authorization' are mutually exclusive, 'basicAuth' has taken precedence"
-		level.Warn(logger).Log("msg", msg)
-		hc.Authorization = nil
+	if hc.Authorization != nil && !amVersion.GTE(semver.MustParse("0.22.0")) {
+		return fmt.Errorf("'authorization' set in 'http_config' but supported in AlertManager >= 0.22.0 only")
 	}
-	// we could have returned here but useful to grab the log and bubble up the warning
-	if httpAuthzAllowed := amVersion.GTE(semver.MustParse("0.22.0")); !httpAuthzAllowed {
-		msg := "'authorization' set in 'http_config' but  supported in AlertManager >= 0.22.0 only - dropping field from provided config"
+
+	if hc.OAuth2 != nil && !amVersion.GTE(semver.MustParse("0.22.0")) {
+		return fmt.Errorf("'oauth2' set in 'http_config' but supported in AlertManager >= 0.22.0 only")
+	}
+
+	if hc.FollowRedirects != nil && !amVersion.GTE(semver.MustParse("0.22.0")) {
+		msg := "'follow_redirects' set in 'http_config' but supported in AlertManager >= 0.22.0 only - dropping field from provided config"
 		level.Warn(logger).Log("msg", msg, "current_version", amVersion.String())
-		hc.Authorization = nil
+		hc.FollowRedirects = nil
 	}
+	return nil
 }
 
 // sanitize the receiver
-func (r *receiver) sanitize(amVersion semver.Version, logger log.Logger) {
+func (r *receiver) sanitize(amVersion semver.Version, logger log.Logger) error {
 	if r == nil {
-		return
+		return nil
 	}
 	withLogger := log.With(logger, "receiver", r.Name)
 
 	for _, conf := range r.OpsgenieConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.PagerdutyConfigs {
-		conf.sanitize(amVersion, withLogger)
-	}
-
-	for _, conf := range r.PagerdutyConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.PushoverConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.SlackConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.VictorOpsConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.WebhookConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
 
 	for _, conf := range r.WeChatConfigs {
-		conf.sanitize(amVersion, withLogger)
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
 	}
+
+	for _, conf := range r.SNSConfigs {
+		if err := conf.sanitize(amVersion, withLogger); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-func (ogc *opsgenieConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	ogc.HTTPConfig.sanitize(amVersion, logger)
+func (ogc *opsgenieConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return ogc.HTTPConfig.sanitize(amVersion, logger)
 }
 
-func (pdc *pagerdutyConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	pdc.HTTPConfig.sanitize(amVersion, logger)
+func (pdc *pagerdutyConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return pdc.HTTPConfig.sanitize(amVersion, logger)
 }
 
-func (poc *pushoverConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	poc.HTTPConfig.sanitize(amVersion, logger)
+func (poc *pushoverConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return poc.HTTPConfig.sanitize(amVersion, logger)
+
 }
 
-func (sc *slackConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	sc.HTTPConfig.sanitize(amVersion, logger)
+func (sc *slackConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	if err := sc.HTTPConfig.sanitize(amVersion, logger); err != nil {
+		return err
+	}
 
 	if sc.APIURLFile == "" {
-		return
+		return nil
 	}
 	// We need to sanitize the config for slack receivers
 	// As of v0.22.0 AlertManager config supports passing URL via file name
@@ -1316,18 +1415,23 @@ func (sc *slackConfig) sanitize(amVersion semver.Version, logger log.Logger) {
 		level.Warn(logger).Log("msg", msg, "current_version", amVersion.String())
 		sc.APIURLFile = ""
 	}
+	return nil
 }
 
-func (voc *victorOpsConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	voc.HTTPConfig.sanitize(amVersion, logger)
+func (voc *victorOpsConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return voc.HTTPConfig.sanitize(amVersion, logger)
 }
 
-func (whc *webhookConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	whc.HTTPConfig.sanitize(amVersion, logger)
+func (whc *webhookConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return whc.HTTPConfig.sanitize(amVersion, logger)
 }
 
-func (wcc *weChatConfig) sanitize(amVersion semver.Version, logger log.Logger) {
-	wcc.HTTPConfig.sanitize(amVersion, logger)
+func (wcc *weChatConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return wcc.HTTPConfig.sanitize(amVersion, logger)
+}
+
+func (sc *snsConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	return sc.HTTPConfig.sanitize(amVersion, logger)
 }
 
 func (ir *inhibitRule) sanitize(amVersion semver.Version, logger log.Logger) error {

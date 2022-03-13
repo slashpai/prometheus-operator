@@ -277,9 +277,9 @@ func TestValidateRelabelConfig(t *testing.T) {
 		t.Errorf("Could not assert marshaled defaultRegexp as string: %v", defaultRegexp)
 	}
 
-	defaultSourceLabels := []string{}
+	defaultSourceLabels := []monitoringv1.LabelName{}
 	for _, label := range relabel.DefaultRelabelConfig.SourceLabels {
-		defaultSourceLabels = append(defaultSourceLabels, string(label))
+		defaultSourceLabels = append(defaultSourceLabels, monitoringv1.LabelName(label))
 	}
 
 	for _, tc := range []struct {
@@ -326,7 +326,7 @@ func TestValidateRelabelConfig(t *testing.T) {
 		{
 			scenario: "invalid hashmod config",
 			relabelConfig: monitoringv1.RelabelConfig{
-				SourceLabels: []string{"instance"},
+				SourceLabels: []monitoringv1.LabelName{"instance"},
 				Action:       "hashmod",
 				Modulus:      0,
 				TargetLabel:  "__tmp_hashmod",
@@ -364,7 +364,7 @@ func TestValidateRelabelConfig(t *testing.T) {
 		{
 			scenario: "invalid labelkeep config",
 			relabelConfig: monitoringv1.RelabelConfig{
-				SourceLabels: []string{"instance"},
+				SourceLabels: []monitoringv1.LabelName{"instance"},
 				Action:       "labelkeep",
 				TargetLabel:  "__tmp_labelkeep",
 			},
@@ -401,7 +401,7 @@ func TestValidateRelabelConfig(t *testing.T) {
 		{
 			scenario: "valid hashmod config",
 			relabelConfig: monitoringv1.RelabelConfig{
-				SourceLabels: []string{"instance"},
+				SourceLabels: []monitoringv1.LabelName{"instance"},
 				Action:       "hashmod",
 				Modulus:      10,
 				TargetLabel:  "__tmp_hashmod",
@@ -411,7 +411,7 @@ func TestValidateRelabelConfig(t *testing.T) {
 		{
 			scenario: "valid replace config",
 			relabelConfig: monitoringv1.RelabelConfig{
-				SourceLabels: []string{"__address__"},
+				SourceLabels: []monitoringv1.LabelName{"__address__"},
 				Action:       "replace",
 				Regex:        "([^:]+)(?::\\d+)?",
 				Replacement:  "$1:80",
@@ -553,7 +553,9 @@ func TestValidateScrapeIntervalAndTimeout(t *testing.T) {
 			scenario: "only scrape timeout specified at service monitor spec but invalid compared to global scrapeInterval",
 			prometheus: monitoringv1.Prometheus{
 				Spec: monitoringv1.PrometheusSpec{
-					ScrapeInterval: "15s",
+					CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
+						ScrapeInterval: "15s",
+					},
 				},
 			},
 			smSpec: monitoringv1.ServiceMonitorSpec{

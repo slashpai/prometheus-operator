@@ -64,11 +64,12 @@ const (
 )
 
 var (
-	ns             = namespaces{}
-	deniedNs       = namespaces{}
-	prometheusNs   = namespaces{}
-	alertmanagerNs = namespaces{}
-	thanosRulerNs  = namespaces{}
+	ns                   = namespaces{}
+	deniedNs             = namespaces{}
+	prometheusNs         = namespaces{}
+	alertmanagerNs       = namespaces{}
+	alertmanagerConfigNs = namespaces{}
+	thanosRulerNs        = namespaces{}
 )
 
 type namespaces map[string]struct{}
@@ -163,6 +164,7 @@ func init() {
 	flagset.Var(deniedNs, "deny-namespaces", "Namespaces not to scope the interaction of the Prometheus Operator (deny list). This is mutually exclusive with --namespaces.")
 	flagset.Var(prometheusNs, "prometheus-instance-namespaces", "Namespaces where Prometheus custom resources and corresponding Secrets, Configmaps and StatefulSets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for Prometheus custom resources.")
 	flagset.Var(alertmanagerNs, "alertmanager-instance-namespaces", "Namespaces where Alertmanager custom resources and corresponding StatefulSets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for Alertmanager custom resources.")
+	flagset.Var(alertmanagerConfigNs, "alertmanager-config-namespaces", "Namespaces where AlertmanagerConfig custom resources and corresponding Secrets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for AlertmanagerConfig custom resources.")
 	flagset.Var(thanosRulerNs, "thanos-ruler-instance-namespaces", "Namespaces where ThanosRuler custom resources and corresponding StatefulSets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for ThanosRuler custom resources.")
 	flagset.Var(&cfg.Labels, "labels", "Labels to be add to all resources created by the operator")
 	flagset.StringVar(&cfg.LocalHost, "localhost", "localhost", "EXPERIMENTAL (could be removed in future releases) - Host used to communicate between local services on a pod. Fixes issues where localhost resolves incorrectly.")
@@ -231,6 +233,7 @@ func Main() int {
 	cfg.Namespaces.DenyList = deniedNs
 	cfg.Namespaces.PrometheusAllowList = prometheusNs
 	cfg.Namespaces.AlertmanagerAllowList = alertmanagerNs
+	cfg.Namespaces.AlertmanagerConfigAllowList = alertmanagerConfigNs
 	cfg.Namespaces.ThanosRulerAllowList = thanosRulerNs
 
 	if len(cfg.Namespaces.PrometheusAllowList) == 0 {
@@ -239,6 +242,10 @@ func Main() int {
 
 	if len(cfg.Namespaces.AlertmanagerAllowList) == 0 {
 		cfg.Namespaces.AlertmanagerAllowList = cfg.Namespaces.AllowList
+	}
+
+	if len(cfg.Namespaces.AlertmanagerConfigAllowList) == 0 {
+		cfg.Namespaces.AlertmanagerConfigAllowList = cfg.Namespaces.AllowList
 	}
 
 	if len(cfg.Namespaces.ThanosRulerAllowList) == 0 {
