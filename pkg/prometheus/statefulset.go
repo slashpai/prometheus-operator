@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/prometheus-operator/prometheus-operator/pkg/webconfig"
@@ -122,9 +123,6 @@ func makeStatefulSet(
 	intZero := int32(0)
 	if p.Spec.Replicas != nil && *p.Spec.Replicas < 0 {
 		p.Spec.Replicas = &intZero
-	}
-	if p.Spec.Retention == "" {
-		p.Spec.Retention = defaultRetention
 	}
 
 	if p.Spec.Resources.Requests == nil {
@@ -348,18 +346,32 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 	}
 
 	retentionTimeFlag := "-storage.tsdb.retention="
-	if version.Minor >= 7 {
+	if version.GTE(semver.MustParse("2.7.0")) {
 		retentionTimeFlag = "-storage.tsdb.retention.time="
-		if p.Spec.RetentionSize != "" {
-			promArgs = append(promArgs,
-				fmt.Sprintf("-storage.tsdb.retention.size=%s", p.Spec.RetentionSize),
-			)
+		if p.Spec.Retention == "" && p.Spec.RetentionSize == "" {
+			promArgs = append(promArgs, retentionTimeFlag+defaultRetention)
+		} else {
+			if p.Spec.Retention != "" {
+				promArgs = append(promArgs, retentionTimeFlag+p.Spec.Retention)
+			}
+
+			if p.Spec.RetentionSize != "" {
+				promArgs = append(promArgs,
+					fmt.Sprintf("-storage.tsdb.retention.size=%s", p.Spec.RetentionSize),
+				)
+			}
+		}
+	} else {
+		if p.Spec.Retention == "" {
+			promArgs = append(promArgs, retentionTimeFlag+defaultRetention)
+		} else {
+			promArgs = append(promArgs, retentionTimeFlag+p.Spec.Retention)
 		}
 	}
+
 	promArgs = append(promArgs,
 		fmt.Sprintf("-config.file=%s", path.Join(confOutDir, configEnvsubstFilename)),
 		fmt.Sprintf("-storage.tsdb.path=%s", storageDir),
-		retentionTimeFlag+p.Spec.Retention,
 		"-web.enable-lifecycle",
 	)
 
@@ -502,6 +514,15 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		},
 	}
 
+	if p.Spec.QueryLogFile != "" && filepath.Dir(p.Spec.QueryLogFile) == "." {
+		volumes = append(volumes, v1.Volume{
+			Name: "query-log-file",
+			VolumeSource: v1.VolumeSource{
+				EmptyDir: &v1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+
 	for _, name := range ruleConfigMapNames {
 		volumes = append(volumes, v1.Volume{
 			Name: name,
@@ -545,6 +566,14 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		promVolumeMounts = append(promVolumeMounts, v1.VolumeMount{
 			Name:      name,
 			MountPath: rulesDir + "/" + name,
+		})
+	}
+
+	if p.Spec.QueryLogFile != "" && filepath.Dir(p.Spec.QueryLogFile) == "." {
+		promVolumeMounts = append(promVolumeMounts, v1.VolumeMount{
+			Name:      "query-log-file",
+			ReadOnly:  false,
+			MountPath: "/var/log/prometheus",
 		})
 	}
 
@@ -642,8 +671,13 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		FailureThreshold: 60,
 	}
 
-	// TODO(paulfantom): Re-add livenessProbe when kubernetes 1.21 is available.
-	// This would be a follow-up to https://github.com/prometheus-operator/prometheus-operator/pull/3502
+	livenessProbe := &v1.Probe{
+		ProbeHandler:     probeHandler("/-/healthy"),
+		TimeoutSeconds:   probeTimeoutSeconds,
+		PeriodSeconds:    5,
+		FailureThreshold: 6,
+	}
+
 	readinessProbe := &v1.Probe{
 		ProbeHandler:     probeHandler("/-/ready"),
 		TimeoutSeconds:   probeTimeoutSeconds,
@@ -732,11 +766,20 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 			}
 		}
 
+		boolFalse := false
+		boolTrue := true
 		container := v1.Container{
 			Name:                     "thanos-sidecar",
 			Image:                    thanosImage,
 			TerminationMessagePolicy: v1.TerminationMessageFallbackToLogsOnError,
 			Args:                     thanosArgs,
+			SecurityContext: &v1.SecurityContext{
+				AllowPrivilegeEscalation: &boolFalse,
+				ReadOnlyRootFilesystem:   &boolTrue,
+				Capabilities: &v1.Capabilities{
+					Drop: []v1.Capability{"ALL"},
+				},
+			},
 			Ports: []v1.ContainerPort{
 				{
 					Name:          "http",
@@ -871,6 +914,8 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		return nil, errors.Wrap(err, "failed to merge init containers spec")
 	}
 
+	boolFalse := false
+	boolTrue := true
 	operatorContainers := append([]v1.Container{
 		{
 			Name:                     "prometheus",
@@ -879,9 +924,17 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 			Args:                     promArgs,
 			VolumeMounts:             promVolumeMounts,
 			StartupProbe:             startupProbe,
+			LivenessProbe:            livenessProbe,
 			ReadinessProbe:           readinessProbe,
 			Resources:                p.Spec.Resources,
 			TerminationMessagePolicy: v1.TerminationMessageFallbackToLogsOnError,
+			SecurityContext: &v1.SecurityContext{
+				ReadOnlyRootFilesystem:   &boolTrue,
+				AllowPrivilegeEscalation: &boolFalse,
+				Capabilities: &v1.Capabilities{
+					Drop: []v1.Capability{"ALL"},
+				},
+			},
 		},
 		operator.CreateConfigReloader(
 			"config-reloader",
@@ -907,7 +960,6 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		return nil, errors.Wrap(err, "failed to merge containers spec")
 	}
 
-	boolTrue := true
 	// PodManagementPolicy is set to Parallel to mitigate issues in kubernetes: https://github.com/kubernetes/kubernetes/issues/60164
 	// This is also mentioned as one of limitations of StatefulSets: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#limitations
 	return &appsv1.StatefulSetSpec{
