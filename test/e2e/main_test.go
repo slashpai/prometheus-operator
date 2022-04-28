@@ -178,7 +178,6 @@ func testAllNSAlertmanager(t *testing.T) {
 func testAllNSPrometheus(t *testing.T) {
 	skipPrometheusAllNSTests(t)
 	testFuncs := map[string]func(t *testing.T){
-		"PrometheusCRDValidation":                testPrometheusCRDValidation,
 		"PromRemoteWriteWithTLS":                 testPromRemoteWriteWithTLS,
 		"PromCreateDeleteCluster":                testPromCreateDeleteCluster,
 		"PromScaleUpDownCluster":                 testPromScaleUpDownCluster,
@@ -217,7 +216,6 @@ func testAllNSPrometheus(t *testing.T) {
 		"PromMinReadySeconds":                    testPromMinReadySeconds,
 		"PromEnforcedNamespaceLabel":             testPromEnforcedNamespaceLabel,
 		"PromQueryLogFile":                       testPromQueryLogFile,
-		"PromDegradedCondition":                  testPromDegradedConditionStatus,
 	}
 
 	for name, f := range testFuncs {

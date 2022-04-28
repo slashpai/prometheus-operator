@@ -633,12 +633,8 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 	}, nil
 }
 
-func defaultConfigSecretName(am *monitoringv1.Alertmanager) string {
-	if am.Spec.ConfigSecret == "" {
-		return prefixedName(am.Name)
-	}
-
-	return am.Spec.ConfigSecret
+func defaultConfigSecretName(name string) string {
+	return prefixedName(name)
 }
 
 func generatedConfigSecretName(name string) string {

@@ -69,8 +69,7 @@ const (
 	// DefaultWriteBufferSize is the default write buffer size.
 	DefaultWriteBufferSize = 4 * 1024 * 1024 // 4 MiB.
 	// DefaultWriteQueueSize is the default size of the in-memory queue used before flushing chunks to the disk.
-	// A value of 0 completely disables this feature.
-	DefaultWriteQueueSize = 0
+	DefaultWriteQueueSize = 1000
 )
 
 // ChunkDiskMapperRef represents the location of a head chunk on disk.
@@ -250,10 +249,7 @@ func NewChunkDiskMapper(reg prometheus.Registerer, dir string, pool chunkenc.Poo
 		crc32:           newCRC32(),
 		chunkBuffer:     newChunkBuffer(),
 	}
-
-	if writeQueueSize > 0 {
-		m.writeQueue = newChunkWriteQueue(reg, writeQueueSize, m.writeChunk)
-	}
+	m.writeQueue = newChunkWriteQueue(reg, writeQueueSize, m.writeChunk)
 
 	if m.pool == nil {
 		m.pool = chunkenc.NewPool()
@@ -379,33 +375,18 @@ func repairLastChunkFile(files map[int]string) (_ map[int]string, returnErr erro
 // WriteChunk writes the chunk to the disk.
 // The returned chunk ref is the reference from where the chunk encoding starts for the chunk.
 func (cdm *ChunkDiskMapper) WriteChunk(seriesRef HeadSeriesRef, mint, maxt int64, chk chunkenc.Chunk, callback func(err error)) (chkRef ChunkDiskMapperRef) {
-	// cdm.evtlPosMtx must be held to serialize the calls to cdm.evtlPos.getNextChunkRef() and the writing of the chunk (either with or without queue).
+	var err error
+	defer func() {
+		if err != nil && callback != nil {
+			callback(err)
+		}
+	}()
+
+	// cdm.evtlPosMtx must be held to serialize the calls to .getNextChunkRef() and .addJob().
 	cdm.evtlPosMtx.Lock()
 	defer cdm.evtlPosMtx.Unlock()
+
 	ref, cutFile := cdm.evtlPos.getNextChunkRef(chk)
-
-	if cdm.writeQueue != nil {
-		return cdm.writeChunkViaQueue(ref, cutFile, seriesRef, mint, maxt, chk, callback)
-	}
-
-	err := cdm.writeChunk(seriesRef, mint, maxt, chk, ref, cutFile)
-	if callback != nil {
-		callback(err)
-	}
-
-	return ref
-}
-
-func (cdm *ChunkDiskMapper) writeChunkViaQueue(ref ChunkDiskMapperRef, cutFile bool, seriesRef HeadSeriesRef, mint, maxt int64, chk chunkenc.Chunk, callback func(err error)) (chkRef ChunkDiskMapperRef) {
-	var err error
-	if callback != nil {
-		defer func() {
-			if err != nil {
-				callback(err)
-			}
-		}()
-	}
-
 	err = cdm.writeQueue.addJob(chunkWriteJob{
 		cutFile:   cutFile,
 		seriesRef: seriesRef,
@@ -492,10 +473,6 @@ func (cdm *ChunkDiskMapper) CutNewFile() {
 }
 
 func (cdm *ChunkDiskMapper) IsQueueEmpty() bool {
-	if cdm.writeQueue == nil {
-		return true
-	}
-
 	return cdm.writeQueue.queueIsEmpty()
 }
 
@@ -625,11 +602,9 @@ func (cdm *ChunkDiskMapper) Chunk(ref ChunkDiskMapperRef) (chunkenc.Chunk, error
 		return nil, ErrChunkDiskMapperClosed
 	}
 
-	if cdm.writeQueue != nil {
-		chunk := cdm.writeQueue.get(ref)
-		if chunk != nil {
-			return chunk, nil
-		}
+	chunk := cdm.writeQueue.get(ref)
+	if chunk != nil {
+		return chunk, nil
 	}
 
 	sgmIndex, chkStart := ref.Unpack()
@@ -987,9 +962,7 @@ func (cdm *ChunkDiskMapper) Close() error {
 	cdm.evtlPosMtx.Lock()
 	defer cdm.evtlPosMtx.Unlock()
 
-	if cdm.writeQueue != nil {
-		cdm.writeQueue.stop()
-	}
+	cdm.writeQueue.stop()
 
 	// 'WriteChunk' locks writePathMtx first and then readPathMtx for cutting head chunk file.
 	// The lock order should not be reversed here else it can cause deadlocks.
