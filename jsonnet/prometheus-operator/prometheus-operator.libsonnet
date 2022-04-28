@@ -71,7 +71,6 @@ function(params) {
           'alertmanagerconfigs',
           'prometheuses',
           'prometheuses/finalizers',
-          'prometheuses/status',
           'thanosrulers',
           'thanosrulers/finalizers',
           'servicemonitors',
@@ -157,8 +156,8 @@ function(params) {
           metadata: {
             labels: po.config.commonLabels,
             annotations: {
-              'kubectl.kubernetes.io/default-container': container.name,
-            },
+              "kubectl.kubernetes.io/default-container": container.name,
+            }
           },
           spec: {
             containers: [container],

@@ -3,7 +3,7 @@
   "kind": "CustomResourceDefinition",
   "metadata": {
     "annotations": {
-      "controller-gen.kubebuilder.io/version": "v0.8.0"
+      "controller-gen.kubebuilder.io/version": "v0.6.2"
     },
     "creationTimestamp": null,
     "name": "podmonitors.monitoring.coreos.com"
@@ -17,9 +17,6 @@
       "kind": "PodMonitor",
       "listKind": "PodMonitorList",
       "plural": "podmonitors",
-      "shortNames": [
-        "pmon"
-      ],
       "singular": "podmonitor"
     },
     "scope": "Namespaced",
@@ -198,8 +195,7 @@
                           "type": "boolean"
                         },
                         "interval": {
-                          "description": "Interval at which metrics should be scraped If not specified Prometheus' global scrape interval is used.",
-                          "pattern": "^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$",
+                          "description": "Interval at which metrics should be scraped",
                           "type": "string"
                         },
                         "metricRelabelings": {
@@ -436,8 +432,7 @@
                           "type": "string"
                         },
                         "scrapeTimeout": {
-                          "description": "Timeout after which the scrape is ended If not specified, the Prometheus global scrape interval is used.",
-                          "pattern": "^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$",
+                          "description": "Timeout after which the scrape is ended",
                           "type": "string"
                         },
                         "targetPort": {

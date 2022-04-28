@@ -69,8 +69,7 @@ type Operator struct {
 
 	queue workqueue.RateLimitingInterface
 
-	metrics         *operator.Metrics
-	reconciliations *operator.ReconciliationTracker
+	metrics *operator.Metrics
 
 	config Config
 }
@@ -112,12 +111,11 @@ func New(ctx context.Context, conf operator.Config, logger log.Logger, r prometh
 	}
 
 	o := &Operator{
-		kclient:         client,
-		mclient:         mclient,
-		logger:          logger,
-		queue:           workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "thanos"),
-		metrics:         operator.NewMetrics("thanos", r),
-		reconciliations: &operator.ReconciliationTracker{},
+		kclient: client,
+		mclient: mclient,
+		logger:  logger,
+		queue:   workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "thanos"),
+		metrics: operator.NewMetrics("thanos", r),
 		config: Config{
 			Host:                   conf.Host,
 			TLSInsecure:            conf.TLSInsecure,
@@ -567,11 +565,8 @@ func (o *Operator) processNextWorkItem(ctx context.Context) bool {
 	defer o.queue.Done(key)
 
 	o.metrics.ReconcileCounter().Inc()
-	startTime := time.Now()
 	err := o.sync(ctx, key.(string))
-	o.metrics.ReconcileDurationHistogram().Observe(time.Since(startTime).Seconds())
-	o.reconciliations.SetStatus(key.(string), err)
-
+	o.metrics.SetSyncStatus(key.(string), err == nil)
 	if err == nil {
 		o.queue.Forget(key)
 		return true
@@ -627,7 +622,7 @@ func (o *Operator) handleNamespaceUpdate(oldo, curo interface{}) {
 func (o *Operator) sync(ctx context.Context, key string) error {
 	trobj, err := o.thanosRulerInfs.Get(key)
 	if apierrors.IsNotFound(err) {
-		o.reconciliations.ForgetObject(key)
+		o.metrics.ForgetObject(key)
 		// Dependent resources are cleaned up by K8s via OwnerReferences
 		return nil
 	}

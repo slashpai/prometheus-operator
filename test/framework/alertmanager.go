@@ -77,11 +77,7 @@ func (f *Framework) CreateAlertmanagerConfig(ctx context.Context, ns, name strin
 			},
 		},
 	}
-	subRouteJSON, err := json.Marshal(subRoute)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to marshal subroute")
-	}
-
+	subRouteJSON, _ := json.Marshal(subRoute)
 	amConfig := &monitoringv1alpha1.AlertmanagerConfig{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ns,
@@ -122,7 +118,6 @@ func (f *Framework) CreateAlertmanagerConfig(ctx context.Context, ns, name strin
 			},
 		},
 	}
-
 	return f.MonClientV1alpha1.AlertmanagerConfigs(ns).Create(ctx, amConfig, metav1.CreateOptions{})
 }
 
