@@ -4,27 +4,21 @@ reviewers:
 - bwplotka
 - simonpasquier
 - slashpai
-- prashbnair
 - arajkumar
 - sthaha
-- PhilipGough
-- bison
-- fpetkovski
 - raptorsun
 - jan--f
+- JoaoBraveCoding
 
 approvers:
 - bwplotka
 - simonpasquier
 - slashpai
-- prashbnair
 - arajkumar
 - sthaha
-- PhilipGough
-- bison
-- fpetkovski
 - raptorsun
 - jan--f
+- JoaoBraveCoding
 
 emeritus_approvers:
 - dgrisonnet
@@ -35,3 +29,7 @@ emeritus_approvers:
 - pgier
 - s-urbaniak
 - LiliC
+- fpetkovski
+- prashbnair
+- PhilipGough
+- bison
