@@ -30,7 +30,6 @@ import (
 
 	v1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/assets"
-	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespace-labeler"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
 )
 
@@ -363,37 +362,32 @@ func buildExternalLabels(p *v1.Prometheus) yaml.MapSlice {
 
 // validateConfigInputs runs extra validation on the Prometheus fields which can't be done at the CRD schema validation level.
 func validateConfigInputs(p *v1.Prometheus) error {
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.EnforcedBodySizeLimit != "" {
-		if err := operator.ValidateSizeField(string(p.Spec.EnforcedBodySizeLimit)); err != nil {
+		if err := operator.ValidateSizeField(p.Spec.EnforcedBodySizeLimit); err != nil {
 			return errors.Wrap(err, "invalid enforcedBodySizeLimit value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.RetentionSize != "" {
-		if err := operator.ValidateSizeField(string(p.Spec.RetentionSize)); err != nil {
+		if err := operator.ValidateSizeField(p.Spec.RetentionSize); err != nil {
 			return errors.Wrap(err, "invalid retentionSize value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.Retention != "" {
-		if err := operator.ValidateDurationField(string(p.Spec.Retention)); err != nil {
+		if err := operator.ValidateDurationField(p.Spec.Retention); err != nil {
 			return errors.Wrap(err, "invalid retention value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.ScrapeInterval != "" {
-		if err := operator.ValidateDurationField(string(p.Spec.ScrapeInterval)); err != nil {
+		if err := operator.ValidateDurationField(p.Spec.ScrapeInterval); err != nil {
 			return errors.Wrap(err, "invalid scrapeInterval value specified")
 		}
 	}
 
 	if p.Spec.ScrapeTimeout != "" {
-		// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
-		if err := operator.ValidateDurationField(string(p.Spec.ScrapeTimeout)); err != nil {
+		if err := operator.ValidateDurationField(p.Spec.ScrapeTimeout); err != nil {
 			return errors.Wrap(err, "invalid scrapeTimeout value specified")
 		}
 		if err := operator.CompareScrapeTimeoutToScrapeInterval(p.Spec.ScrapeTimeout, p.Spec.ScrapeInterval); err != nil {
@@ -401,47 +395,41 @@ func validateConfigInputs(p *v1.Prometheus) error {
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.EvaluationInterval != "" {
-		if err := operator.ValidateDurationField(string(p.Spec.EvaluationInterval)); err != nil {
+		if err := operator.ValidateDurationField(p.Spec.EvaluationInterval); err != nil {
 			return errors.Wrap(err, "invalid evaluationInterval value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.Thanos != nil && p.Spec.Thanos.ReadyTimeout != "" {
-		if err := operator.ValidateDurationField(string(p.Spec.Thanos.ReadyTimeout)); err != nil {
+		if err := operator.ValidateDurationField(p.Spec.Thanos.ReadyTimeout); err != nil {
 			return errors.Wrap(err, "invalid thanos.readyTimeout value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	if p.Spec.Query != nil && p.Spec.Query.Timeout != nil && *p.Spec.Query.Timeout != "" {
-		if err := operator.ValidateDurationField(string(*p.Spec.Query.Timeout)); err != nil {
+		if err := operator.ValidateDurationField(*p.Spec.Query.Timeout); err != nil {
 			return errors.Wrap(err, "invalid query.timeout value specified")
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	for i, rr := range p.Spec.RemoteRead {
 		if rr.RemoteTimeout != "" {
-			if err := operator.ValidateDurationField(string(rr.RemoteTimeout)); err != nil {
+			if err := operator.ValidateDurationField(rr.RemoteTimeout); err != nil {
 				return errors.Wrapf(err, "invalid remoteRead[%d].remoteTimeout value specified", i)
 			}
 		}
 	}
 
-	// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 	for i, rw := range p.Spec.RemoteWrite {
 		if rw.RemoteTimeout != "" {
-			if err := operator.ValidateDurationField(string(rw.RemoteTimeout)); err != nil {
+			if err := operator.ValidateDurationField(rw.RemoteTimeout); err != nil {
 				return errors.Wrapf(err, "invalid remoteWrite[%d].remoteTimeout value specified", i)
 			}
 		}
 
-		// TODO(slashpai): Remove this validation after v0.57 since this is handled at CRD level
 		if rw.MetadataConfig != nil && rw.MetadataConfig.SendInterval != "" {
-			if err := operator.ValidateDurationField(string(rw.MetadataConfig.SendInterval)); err != nil {
+			if err := operator.ValidateDurationField(rw.MetadataConfig.SendInterval); err != nil {
 				return errors.Wrapf(err, "invalid remoteWrite[%d].metadataConfig.sendInterval value specified", i)
 			}
 		}
@@ -450,7 +438,7 @@ func validateConfigInputs(p *v1.Prometheus) error {
 	if p.Spec.Alerting != nil {
 		for i, ap := range p.Spec.Alerting.Alertmanagers {
 			if ap.Timeout != nil && *ap.Timeout != "" {
-				if err := operator.ValidateDurationField(string(*ap.Timeout)); err != nil {
+				if err := operator.ValidateDurationField(*ap.Timeout); err != nil {
 					return errors.Wrapf(err, "invalid alertmanagers[%d].timeout value specified", i)
 				}
 			}
@@ -479,18 +467,14 @@ func (cg *ConfigGenerator) Generate(
 
 	cfg := yaml.MapSlice{}
 
-	// TODO(slashpai): Remove this default assignment after v0.57 since this is set at CRD level
 	scrapeInterval := "30s"
-	// TODO(slashpai): Remove this check after v0.57 since default is set at CRD level
 	if p.Spec.ScrapeInterval != "" {
-		scrapeInterval = string(p.Spec.ScrapeInterval)
+		scrapeInterval = p.Spec.ScrapeInterval
 	}
 
-	// TODO(slashpai): Remove this default assignment after v0.57 since this is set at CRD level
 	evaluationInterval := "30s"
-	// TODO(slashpai): Remove this check after v0.57 since default is set at CRD level
 	if p.Spec.EvaluationInterval != "" {
-		evaluationInterval = string(p.Spec.EvaluationInterval)
+		evaluationInterval = p.Spec.EvaluationInterval
 	}
 
 	globalItems := yaml.MapSlice{
@@ -884,8 +868,11 @@ func (cg *ConfigGenerator) generatePodMonitorConfig(
 		})
 	}
 
-	labeler := namespacelabeler.New(cg.spec.EnforcedNamespaceLabel, cg.spec.ExcludedFromEnforcement, false)
-	relabelings = append(relabelings, generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, ep.RelabelConfigs))...)
+	rcg := relabelConfigGenerator{
+		obj:                    m,
+		enforcedNamespaceLabel: cg.spec.EnforcedNamespaceLabel,
+	}
+	relabelings = append(relabelings, rcg.generate(ep.RelabelConfigs)...)
 
 	relabelings = generateAddressShardingRelabelingRules(relabelings, shards)
 	cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
@@ -900,7 +887,7 @@ func (cg *ConfigGenerator) generatePodMonitorConfig(
 		cfg = cg.WithMinimumVersion("2.28.0").AppendMapItem(cfg, "body_size_limit", cg.spec.EnforcedBodySizeLimit)
 	}
 
-	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, ep.MetricRelabelConfigs))})
+	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: rcg.generate(ep.MetricRelabelConfigs)})
 
 	return cfg
 }
@@ -968,7 +955,11 @@ func (cg *ConfigGenerator) generateProbeConfig(
 			},
 		}...)
 	}
-	labeler := namespacelabeler.New(cg.spec.EnforcedNamespaceLabel, cg.spec.ExcludedFromEnforcement, false)
+
+	rcg := &relabelConfigGenerator{
+		obj:                    m,
+		enforcedNamespaceLabel: cg.spec.EnforcedNamespaceLabel,
+	}
 
 	if m.Spec.Targets.StaticConfig != nil {
 		// Generate static_config section.
@@ -1010,8 +1001,8 @@ func (cg *ConfigGenerator) generateProbeConfig(
 		}...)
 
 		// Add configured relabelings.
-		xc := labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, m.Spec.Targets.StaticConfig.RelabelConfigs)
-		relabelings = append(relabelings, generateRelabelConfig(xc)...)
+		relabelings = append(relabelings, rcg.generate(m.Spec.Targets.StaticConfig.RelabelConfigs)...)
+
 		cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
 	} else {
 		// Generate kubernetes_sd_config section for the ingress resources.
@@ -1106,9 +1097,12 @@ func (cg *ConfigGenerator) generateProbeConfig(
 		}...)
 
 		// Add configured relabelings.
-		relabelings = append(relabelings, generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, m.Spec.Targets.Ingress.RelabelConfigs))...)
+		rcg := &relabelConfigGenerator{
+			obj:                    m,
+			enforcedNamespaceLabel: cg.spec.EnforcedNamespaceLabel,
+		}
+		relabelings = append(relabelings, rcg.generate(m.Spec.Targets.Ingress.RelabelConfigs)...)
 		relabelings = generateAddressShardingRelabelingRulesForProbes(relabelings, shards)
-
 		cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
 
 	}
@@ -1140,7 +1134,7 @@ func (cg *ConfigGenerator) generateProbeConfig(
 
 	cfg = cg.addSafeAuthorizationToYaml(cfg, fmt.Sprintf("probe/auth/%s/%s", m.Namespace, m.Name), store, m.Spec.Authorization)
 
-	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, m.Spec.MetricRelabelConfigs))})
+	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: rcg.generate(m.Spec.MetricRelabelConfigs)})
 
 	return cfg
 }
@@ -1385,8 +1379,11 @@ func (cg *ConfigGenerator) generateServiceMonitorConfig(
 		})
 	}
 
-	labeler := namespacelabeler.New(cg.spec.EnforcedNamespaceLabel, cg.spec.ExcludedFromEnforcement, false)
-	relabelings = append(relabelings, generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, ep.RelabelConfigs))...)
+	rcg := &relabelConfigGenerator{
+		obj:                    m,
+		enforcedNamespaceLabel: cg.spec.EnforcedNamespaceLabel,
+	}
+	relabelings = append(relabelings, rcg.generate(ep.RelabelConfigs)...)
 
 	relabelings = generateAddressShardingRelabelingRules(relabelings, shards)
 	cfg = append(cfg, yaml.MapItem{Key: "relabel_configs", Value: relabelings})
@@ -1401,7 +1398,7 @@ func (cg *ConfigGenerator) generateServiceMonitorConfig(
 		cfg = cg.WithMinimumVersion("2.28.0").AppendMapItem(cfg, "body_size_limit", cg.spec.EnforcedBodySizeLimit)
 	}
 
-	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: generateRelabelConfig(labeler.GetRelabelingConfigs(m.TypeMeta, m.ObjectMeta, ep.MetricRelabelConfigs))})
+	cfg = append(cfg, yaml.MapItem{Key: "metric_relabel_configs", Value: rcg.generate(ep.MetricRelabelConfigs)})
 
 	return cfg
 }
@@ -1437,43 +1434,38 @@ func generateAddressShardingRelabelingRulesWithSourceLabel(relabelings []yaml.Ma
 	})
 }
 
-func generateRelabelConfig(rc []*v1.RelabelConfig) []yaml.MapSlice {
-	var cfg []yaml.MapSlice
+func generateRelabelConfig(c *v1.RelabelConfig) yaml.MapSlice {
+	relabeling := yaml.MapSlice{}
 
-	for _, c := range rc {
-		relabeling := yaml.MapSlice{}
-
-		if len(c.SourceLabels) > 0 {
-			relabeling = append(relabeling, yaml.MapItem{Key: "source_labels", Value: c.SourceLabels})
-		}
-
-		if c.Separator != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
-		}
-
-		if c.TargetLabel != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
-		}
-
-		if c.Regex != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
-		}
-
-		if c.Modulus != uint64(0) {
-			relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
-		}
-
-		if c.Replacement != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
-		}
-
-		if c.Action != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
-		}
-
-		cfg = append(cfg, relabeling)
+	if len(c.SourceLabels) > 0 {
+		relabeling = append(relabeling, yaml.MapItem{Key: "source_labels", Value: c.SourceLabels})
 	}
-	return cfg
+
+	if c.Separator != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "separator", Value: c.Separator})
+	}
+
+	if c.TargetLabel != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "target_label", Value: c.TargetLabel})
+	}
+
+	if c.Regex != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "regex", Value: c.Regex})
+	}
+
+	if c.Modulus != uint64(0) {
+		relabeling = append(relabeling, yaml.MapItem{Key: "modulus", Value: c.Modulus})
+	}
+
+	if c.Replacement != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "replacement", Value: c.Replacement})
+	}
+
+	if c.Action != "" {
+		relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+	}
+
+	return relabeling
 }
 
 // GetNamespacesFromNamespaceSelector gets a list of namespaces to select based on
@@ -1949,4 +1941,30 @@ func (cg *ConfigGenerator) generateRemoteWriteConfig(
 		Key:   "remote_write",
 		Value: cfgs,
 	}
+}
+
+type relabelConfigGenerator struct {
+	obj                    metav1.Object
+	enforcedNamespaceLabel string
+}
+
+func (rcg relabelConfigGenerator) generate(c []*v1.RelabelConfig) []yaml.MapSlice {
+	var cfg []yaml.MapSlice
+
+	for _, c := range c {
+		cfg = append(cfg, generateRelabelConfig(c))
+	}
+
+	// Because of security risks, whenever enforcedNamespaceLabel is set, we want to append it to the
+	// relabel configurations as the last relabeling, to ensure it overrides any other relabelings.
+	if rcg.enforcedNamespaceLabel != "" {
+		cfg = append(cfg,
+			yaml.MapSlice{
+				{Key: "target_label", Value: rcg.enforcedNamespaceLabel},
+				{Key: "replacement", Value: rcg.obj.GetNamespace()},
+			},
+		)
+	}
+
+	return cfg
 }

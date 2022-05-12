@@ -15,11 +15,10 @@
 package k8sutil
 
 import (
-	"testing"
-
 	"github.com/kylelemons/godebug/pretty"
 	"github.com/stretchr/testify/require"
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
+	"testing"
 )
 
 func TestPodLabelsAnnotations(t *testing.T) {
@@ -115,47 +114,6 @@ func TestPodLabelsAnnotations(t *testing.T) {
 		require.NoError(t, err)
 		if diff := pretty.Compare(result, tc.result); diff != "" {
 			t.Fatalf("Test %s: patch result did not match. diff: %s.", tc.name, diff)
-		}
-	}
-}
-
-func TestMergePatchContainersOrderPreserved(t *testing.T) {
-	build := func(name, image string) v1.Container {
-		return v1.Container{
-			Name:  name,
-			Image: image,
-		}
-	}
-
-	for i := 0; i < 10; i++ {
-		result, err := MergePatchContainers(
-			[]v1.Container{
-				build("c1", "image:base"),
-				build("c2", "image:base"),
-			},
-			[]v1.Container{
-				build("c1", "image:A"),
-				build("c3", "image:B"),
-				build("c4", "image:C"),
-				build("c5", "image:D"),
-				build("c6", "image:E"),
-			},
-		)
-		require.NoError(t, err)
-
-		diff := pretty.Compare(
-			result,
-			[]v1.Container{
-				build("c1", "image:A"),
-				build("c2", "image:base"),
-				build("c3", "image:B"),
-				build("c4", "image:C"),
-				build("c5", "image:D"),
-				build("c6", "image:E"),
-			},
-		)
-		if diff != "" {
-			t.Fatalf("patch result did not match. diff:\n%s", diff)
 		}
 	}
 }
