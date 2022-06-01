@@ -110,20 +110,19 @@ func TestGenerateGlobalConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		kclient := fake.NewSimpleClientset()
-		cb := newConfigBuilder(
+		cg := newConfigGenerator(
 			log.NewNopLogger(),
 			version,
 			assets.NewStore(kclient.CoreV1(), kclient.CoreV1()),
 		)
 		t.Run(tt.name, func(t *testing.T) {
-			err := cb.initializeFromAlertmanagerConfig(context.TODO(), tt.amConfig)
+			got, err := cg.generateGlobalConfig(context.TODO(), tt.amConfig)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("configGenerator.generateGlobalConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
-			if !reflect.DeepEqual(cb.cfg, tt.want) {
-				t.Errorf("configGenerator.generateGlobalConfig() = %v, want %v", cb.cfg, tt.want)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("configGenerator.generateGlobalConfig() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -254,6 +253,7 @@ templates: []
 			baseConfig: alertmanagerConfig{
 				Route: &route{
 					Receiver: "null",
+					Matchers: []string{"namespace=test"},
 					Routes: []*route{{
 						Matchers: []string{"namespace=custom-test"},
 						Receiver: "custom",
@@ -267,6 +267,8 @@ templates: []
 			amConfigs: map[string]*monitoringv1alpha1.AlertmanagerConfig{},
 			expected: `route:
   receiver: "null"
+  matchers:
+  - namespace=test
   routes:
   - receiver: custom
     matchers:
@@ -1333,25 +1335,21 @@ templates: []
 				tc.amVersion = &version
 			}
 
-			cb := newConfigBuilder(logger, *tc.amVersion, store)
-			cb.cfg = &tc.baseConfig
-
-			if err := cb.addAlertmanagerConfigs(context.Background(), tc.amConfigs); err != nil {
-				t.Fatal(err)
-			}
-
-			cfgBytes, err := cb.marshalJSON()
+			cg := newConfigGenerator(logger, *tc.amVersion, store)
+			cfgBytes, err := cg.generateConfig(context.Background(), tc.baseConfig, tc.amConfigs)
 			if err != nil {
 				t.Fatal(err)
 			}
 
+			result := string(cfgBytes)
+
 			// Verify the generated yaml is as expected
-			if diff := cmp.Diff(tc.expected, string(cfgBytes)); diff != "" {
+			if diff := cmp.Diff(tc.expected, result); diff != "" {
 				t.Errorf("Unexpected result (-want +got):\n%s", diff)
 			}
 
 			// Verify the generated config is something that Alertmanager will be happy with
-			_, err = alertmanagerConfigFromBytes(cfgBytes)
+			_, err = config.Load(result)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1370,8 +1368,6 @@ func TestSanitizeConfig(t *testing.T) {
 	matcherV2SyntaxAllowed := semver.Version{Major: 0, Minor: 22}
 	matcherV2SyntaxNotAllowed := semver.Version{Major: 0, Minor: 21}
 
-	versionOpsGenieAPIKeyFileAllowed := semver.Version{Major: 0, Minor: 24}
-	versionOpsGenieAPIKeyFileNotAllowed := semver.Version{Major: 0, Minor: 23}
 	for _, tc := range []struct {
 		name           string
 		againstVersion semver.Version
@@ -1622,113 +1618,6 @@ func TestSanitizeConfig(t *testing.T) {
 				},
 			},
 		},
-		{
-			name:           "opsgenie_api_key_file config",
-			againstVersion: versionOpsGenieAPIKeyFileAllowed,
-			in: &alertmanagerConfig{
-				Global: &globalConfig{
-					OpsGenieAPIKeyFile: "/test",
-				},
-			},
-			expect: alertmanagerConfig{
-				Global: &globalConfig{
-					OpsGenieAPIKeyFile: "/test",
-				},
-			},
-		},
-		{
-			name:           "api_key_file field for OpsGenie config",
-			againstVersion: versionOpsGenieAPIKeyFileAllowed,
-			in: &alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								APIKeyFile: "/test",
-							},
-						},
-					},
-				},
-			},
-			expect: alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								APIKeyFile: "/test",
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			name:           "api_key_file and api_key fields for OpsGenie config",
-			againstVersion: versionOpsGenieAPIKeyFileAllowed,
-			in: &alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								APIKey:     "test",
-								APIKeyFile: "/test",
-							},
-						},
-					},
-				},
-			},
-			expect: alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								APIKey: "test",
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			name:           "opsgenie_api_key_file is dropped for unsupported versions",
-			againstVersion: versionOpsGenieAPIKeyFileNotAllowed,
-			in: &alertmanagerConfig{
-				Global: &globalConfig{
-					OpsGenieAPIKeyFile: "/test",
-				},
-			},
-			expect: alertmanagerConfig{
-				Global: &globalConfig{},
-			},
-		},
-		{
-			name:           "api_key_file is dropped for unsupported versions",
-			againstVersion: versionOpsGenieAPIKeyFileNotAllowed,
-			in: &alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								APIKeyFile: "/test",
-							},
-						},
-					},
-				},
-			},
-			expect: alertmanagerConfig{
-				Receivers: []*receiver{
-					{
-						Name:            "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{{}},
-					},
-				},
-			},
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.in.sanitize(tc.againstVersion, logger)
@@ -1902,12 +1791,12 @@ func TestSanitizeRoute(t *testing.T) {
 func TestLoadConfig(t *testing.T) {
 	testCase := []struct {
 		name     string
-		rawConf  []byte
+		rawConf  string
 		expected *alertmanagerConfig
 	}{
 		{
-			name: "mute_time_intervals field",
-			rawConf: []byte(`route:
+			name: "Test mute_time_intervals",
+			rawConf: `route:
   receiver: "null"
 receivers:
 - name: "null"
@@ -1920,7 +1809,7 @@ mute_time_intervals:
     days_of_month: ["7", "18", "28"]
     months: ["january"]
 templates: []
-`),
+`,
 			expected: &alertmanagerConfig{
 				Global: nil,
 				Route: &route{
@@ -1977,74 +1866,16 @@ templates: []
 				Templates: []string{},
 			},
 		},
-		{
-			name: "Global opsgenie_api_key_file field",
-			rawConf: []byte(`route:
-  receiver: "null"
-receivers:
-- name: "null"
-global:
-  opsgenie_api_key_file: "xxx"
-templates: []
-`),
-			expected: &alertmanagerConfig{
-				Global: &globalConfig{
-					OpsGenieAPIKeyFile: "xxx",
-				},
-				Route: &route{
-					Receiver: "null",
-				},
-				Receivers: []*receiver{
-					{
-						Name: "null",
-					},
-				},
-				Templates: []string{},
-			},
-		},
-		{
-			name: "OpsGenie entity and actions fields",
-			rawConf: []byte(`route:
-  receiver: "opsgenie"
-receivers:
-- name: "opsgenie"
-  opsgenie_configs:
-  - entity: entity1
-    actions: action1,action2
-    api_key: xxx
-templates: []
-`),
-			expected: &alertmanagerConfig{
-				Route: &route{
-					Receiver: "opsgenie",
-				},
-				Receivers: []*receiver{
-					{
-						Name: "opsgenie",
-						OpsgenieConfigs: []*opsgenieConfig{
-							{
-								Entity:  "entity1",
-								Actions: "action1,action2",
-								APIKey:  "xxx",
-							},
-						},
-					},
-				},
-				Templates: []string{},
-			},
-		},
 	}
 
 	for _, tc := range testCase {
-		t.Run(tc.name, func(t *testing.T) {
-			ac, err := alertmanagerConfigFromBytes(tc.rawConf)
-			if err != nil {
-				t.Fatalf("expecing no error, got %v", err)
-			}
-			if !reflect.DeepEqual(ac, tc.expected) {
-				t.Fatalf("got:\n%v\nbut wanted:\n%v", ac, tc.expected)
-			}
-		})
+		ac, err := alertmanagerConfigFrom(tc.rawConf)
+		if err != nil {
+			t.Error(err)
+		}
+		if !reflect.DeepEqual(ac, tc.expected) {
+			t.Errorf("got %v but wanted %v", ac, tc.expected)
+		}
 	}
 }
 

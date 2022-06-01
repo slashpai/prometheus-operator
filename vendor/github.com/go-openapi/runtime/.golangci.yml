@@ -1,7 +1,6 @@
 linters-settings:
   govet:
-    # Using err repeatedly considered as shadowing.
-    check-shadowing: false
+    check-shadowing: true
   golint:
     min-confidence: 0
   gocyclo:
