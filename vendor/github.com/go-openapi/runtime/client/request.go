@@ -93,15 +93,6 @@ func (r *request) BuildHTTP(mediaType, basePath string, producers map[string]run
 func escapeQuotes(s string) string {
 	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(s)
 }
-
-func logClose(err error, pw *io.PipeWriter) {
-	log.Println(err)
-	closeErr := pw.CloseWithError(err)
-	if closeErr != nil {
-		log.Println(closeErr)
-	}
-}
-
 func (r *request) buildHTTP(mediaType, basePath string, producers map[string]runtime.Producer, registry strfmt.Registry, auth runtime.ClientAuthInfoWriter) (*http.Request, error) {
 	// build the data
 	if err := r.writer.WriteToRequest(r, registry); err != nil {
@@ -146,8 +137,8 @@ func (r *request) buildHTTP(mediaType, basePath string, producers map[string]run
 			for fn, v := range r.formFields {
 				for _, vi := range v {
 					if err := mp.WriteField(fn, vi); err != nil {
-						logClose(err, pw)
-						return
+						pw.CloseWithError(err)
+						log.Println(err)
 					}
 				}
 			}
@@ -161,15 +152,18 @@ func (r *request) buildHTTP(mediaType, basePath string, producers map[string]run
 			}()
 			for fn, f := range r.fileFields {
 				for _, fi := range f {
+					buf := bytes.NewBuffer([]byte{})
+
 					// Need to read the data so that we can detect the content type
-					buf := make([]byte, 512)
-					size, err := fi.Read(buf)
+					_, err := io.Copy(buf, fi)
 					if err != nil {
-						logClose(err, pw)
-						return
+						_ = pw.CloseWithError(err)
+						log.Println(err)
 					}
-					fileContentType := http.DetectContentType(buf)
-					newFi := runtime.NamedReader(fi.Name(), io.MultiReader(bytes.NewReader(buf[:size]), fi))
+					fileBytes := buf.Bytes()
+					fileContentType := http.DetectContentType(fileBytes)
+
+					newFi := runtime.NamedReader(fi.Name(), buf)
 
 					// Create the MIME headers for the new part
 					h := make(textproto.MIMEHeader)
@@ -180,11 +174,11 @@ func (r *request) buildHTTP(mediaType, basePath string, producers map[string]run
 
 					wrtr, err := mp.CreatePart(h)
 					if err != nil {
-						logClose(err, pw)
-						return
-					}
-					if _, err := io.Copy(wrtr, newFi); err != nil {
-						logClose(err, pw)
+						pw.CloseWithError(err)
+						log.Println(err)
+					} else if _, err := io.Copy(wrtr, newFi); err != nil {
+						pw.CloseWithError(err)
+						log.Println(err)
 					}
 				}
 			}
@@ -279,36 +273,12 @@ DoneChoosingBodySource:
 		}
 	}
 
-	// In case the basePath or the request pathPattern include static query parameters,
-	// parse those out before constructing the final path. The parameters themselves
-	// will be merged with the ones set by the client, with the priority given first to
-	// the ones set by the client, then the path pattern, and lastly the base path.
-	basePathURL, err := url.Parse(basePath)
-	if err != nil {
-		return nil, err
-	}
-	staticQueryParams := basePathURL.Query()
-
-	pathPatternURL, err := url.Parse(r.pathPattern)
-	if err != nil {
-		return nil, err
-	}
-	for name, values := range pathPatternURL.Query() {
-		if _, present := staticQueryParams[name]; present {
-			staticQueryParams.Del(name)
-		}
-		for _, value := range values {
-			staticQueryParams.Add(name, value)
-		}
-	}
-
 	// create http request
 	var reinstateSlash bool
-	if pathPatternURL.Path != "" && pathPatternURL.Path != "/" && pathPatternURL.Path[len(pathPatternURL.Path)-1] == '/' {
+	if r.pathPattern != "" && r.pathPattern != "/" && r.pathPattern[len(r.pathPattern)-1] == '/' {
 		reinstateSlash = true
 	}
-
-	urlPath := path.Join(basePathURL.Path, pathPatternURL.Path)
+	urlPath := path.Join(basePath, r.pathPattern)
 	for k, v := range r.pathParams {
 		urlPath = strings.Replace(urlPath, "{"+k+"}", url.PathEscape(v), -1)
 	}
@@ -319,19 +289,6 @@ DoneChoosingBodySource:
 	req, err := http.NewRequest(r.method, urlPath, body)
 	if err != nil {
 		return nil, err
-	}
-
-	originalParams := r.GetQueryParams()
-
-	// Merge the query parameters extracted from the basePath with the ones set by
-	// the client in this struct. In case of conflict, the client wins.
-	for k, v := range staticQueryParams {
-		_, present := originalParams[k]
-		if !present {
-			if err = r.SetQueryParam(k, v...); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	req.URL.RawQuery = r.query.Encode()

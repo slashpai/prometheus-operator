@@ -17,7 +17,6 @@ package prometheus
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -31,10 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/blang/semver/v4"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
-
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
 	"github.com/prometheus-operator/prometheus-operator/pkg/operator"
@@ -346,9 +342,6 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		return nil, errors.Errorf("unsupported Prometheus major version %s", version)
 	}
 
-	// TODO(slashpai): Refactor the code to cover logging for all components
-	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
-
 	promArgs := []string{
 		"-web.console.templates=/etc/prometheus/consoles",
 		"-web.console.libraries=/etc/prometheus/console_libraries",
@@ -361,7 +354,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 			promArgs = append(promArgs, retentionTimeFlag+defaultRetention)
 		} else {
 			if p.Spec.Retention != "" {
-				promArgs = append(promArgs, retentionTimeFlag+string(p.Spec.Retention))
+				promArgs = append(promArgs, retentionTimeFlag+p.Spec.Retention)
 			}
 
 			if p.Spec.RetentionSize != "" {
@@ -374,7 +367,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		if p.Spec.Retention == "" {
 			promArgs = append(promArgs, retentionTimeFlag+defaultRetention)
 		} else {
-			promArgs = append(promArgs, retentionTimeFlag+string(p.Spec.Retention))
+			promArgs = append(promArgs, retentionTimeFlag+p.Spec.Retention)
 		}
 	}
 
@@ -434,14 +427,6 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 
 	if p.Spec.EnableAdminAPI {
 		promArgs = append(promArgs, "-web.enable-admin-api")
-	}
-
-	if p.Spec.EnableRemoteWriteReceiver {
-		if version.GTE(semver.MustParse("2.33.0")) {
-			promArgs = append(promArgs, "-web.enable-remote-write-receiver")
-		} else {
-			level.Warn(logger).Log("msg", fmt.Sprintf("ignoring \"enableRemoteWriteReceiver\" not supported by Prometheus version=%s minimum_version=2.33.0", version))
-		}
 	}
 
 	if len(p.Spec.EnableFeatures) > 0 {
@@ -646,31 +631,21 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		probePath = path.Clean(webRoutePrefix + probePath)
 		handler := v1.ProbeHandler{}
 		if p.Spec.ListenLocal {
-			probeURL := url.URL{
-				Scheme: "http",
-				Host:   "localhost:9090",
-				Path:   probePath,
-			}
 			handler.Exec = &v1.ExecAction{
 				Command: []string{
 					"sh",
 					"-c",
-					fmt.Sprintf(
-						`if [ -x "$(command -v curl)" ]; then exec %s; elif [ -x "$(command -v wget)" ]; then exec %s; else exit 1; fi`,
-						operator.CurlProber(probeURL.String()),
-						operator.WgetProber(probeURL.String()),
-					),
+					fmt.Sprintf(`if [ -x "$(command -v curl)" ]; then exec curl %[1]s; elif [ -x "$(command -v wget)" ]; then exec wget -q -O /dev/null %[1]s; else exit 1; fi`, fmt.Sprintf("http://localhost:9090%s", probePath)),
 				},
 			}
-			return handler
-		}
-
-		handler.HTTPGet = &v1.HTTPGetAction{
-			Path: probePath,
-			Port: intstr.FromString(p.Spec.PortName),
-		}
-		if p.Spec.Web != nil && p.Spec.Web.TLSConfig != nil && version.GTE(semver.MustParse("2.24.0")) {
-			handler.HTTPGet.Scheme = v1.URISchemeHTTPS
+		} else {
+			handler.HTTPGet = &v1.HTTPGetAction{
+				Path: probePath,
+				Port: intstr.FromString(p.Spec.PortName),
+			}
+			if p.Spec.Web != nil && p.Spec.Web.TLSConfig != nil && version.GTE(semver.MustParse("2.24.0")) {
+				handler.HTTPGet.Scheme = v1.URISchemeHTTPS
+			}
 		}
 		return handler
 	}
@@ -875,7 +850,7 @@ func makeStatefulSetSpec(p monitoringv1.Prometheus, c *operator.Config, shard in
 		}
 
 		if p.Spec.Thanos.ReadyTimeout != "" {
-			container.Args = append(container.Args, "--prometheus.ready_timeout="+string(p.Spec.Thanos.ReadyTimeout))
+			container.Args = append(container.Args, "--prometheus.ready_timeout="+p.Spec.Thanos.ReadyTimeout)
 		}
 		additionalContainers = append(additionalContainers, container)
 	}

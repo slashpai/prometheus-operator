@@ -474,7 +474,7 @@ func TestListenLocal(t *testing.T) {
 				Command: []string{
 					`sh`,
 					`-c`,
-					fmt.Sprintf(`if [ -x "$(command -v curl)" ]; then exec curl --fail %[1]s; elif [ -x "$(command -v wget)" ]; then exec wget -q -O /dev/null %[1]s; else exit 1; fi`, fmt.Sprintf("http://localhost:9090%s", probePath)),
+					fmt.Sprintf(`if [ -x "$(command -v curl)" ]; then exec curl %[1]s; elif [ -x "$(command -v wget)" ]; then exec wget -q -O /dev/null %[1]s; else exit 1; fi`, fmt.Sprintf("http://localhost:9090%s", probePath)),
 				},
 			},
 		}
@@ -1337,8 +1337,8 @@ func TestThanosSideCarVolumes(t *testing.T) {
 func TestRetentionAndRetentionSize(t *testing.T) {
 	tests := []struct {
 		version                    string
-		specRetention              monitoringv1.Duration
-		specRetentionSize          monitoringv1.ByteSize
+		specRetention              string
+		specRetentionSize          string
 		expectedRetentionArg       string
 		expectedRetentionSizeArg   string
 		shouldContainRetention     bool
@@ -2177,63 +2177,5 @@ func TestQueryLogFileVolumeMountNotPresent(t *testing.T) {
 
 	if found {
 		t.Fatal("Query log file mounted, when it shouldn't be.")
-	}
-}
-
-func TestEnableRemoteWriteReceiver(t *testing.T) {
-	for _, tc := range []struct {
-		version                         string
-		enableRemoteWriteReceiver       bool
-		expectedRemoteWriteReceiverFlag bool
-	}{
-		// Test lower version where feature not available
-		{
-			version:                   "2.32.0",
-			enableRemoteWriteReceiver: true,
-		},
-		// Test correct version from which feature available
-		{
-			version:                         "2.33.0",
-			enableRemoteWriteReceiver:       true,
-			expectedRemoteWriteReceiverFlag: true,
-		},
-		{
-			version:                         "2.33.0",
-			enableRemoteWriteReceiver:       false,
-			expectedRemoteWriteReceiverFlag: false,
-		},
-		// Test higher version from which feature available
-		{
-			version:                         "2.33.5",
-			enableRemoteWriteReceiver:       true,
-			expectedRemoteWriteReceiverFlag: true,
-		},
-	} {
-		t.Run(fmt.Sprintf("case %s", tc.version), func(t *testing.T) {
-			sset, err := makeStatefulSet("test", monitoringv1.Prometheus{
-				Spec: monitoringv1.PrometheusSpec{
-					CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
-						Version:                   tc.version,
-						EnableRemoteWriteReceiver: tc.enableRemoteWriteReceiver,
-					},
-				},
-			}, defaultTestConfig, nil, "", 0, nil)
-
-			if err != nil {
-				t.Fatalf("Unexpected error while making StatefulSet: %v", err)
-			}
-
-			found := false
-			for _, flag := range sset.Spec.Template.Spec.Containers[0].Args {
-				if flag == "--web.enable-remote-write-receiver" {
-					found = true
-					break
-				}
-			}
-
-			if found != tc.expectedRemoteWriteReceiverFlag {
-				t.Fatalf("Expecting Prometheus remote write receiver to be %t, got %t", tc.expectedRemoteWriteReceiverFlag, found)
-			}
-		})
 	}
 }
