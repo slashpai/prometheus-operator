@@ -628,13 +628,18 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 				Tolerations:                   a.Spec.Tolerations,
 				Affinity:                      a.Spec.Affinity,
 				TopologySpreadConstraints:     a.Spec.TopologySpreadConstraints,
+				HostAliases:                   operator.MakeHostAliases(a.Spec.HostAliases),
 			},
 		},
 	}, nil
 }
 
-func defaultConfigSecretName(name string) string {
-	return prefixedName(name)
+func defaultConfigSecretName(am *monitoringv1.Alertmanager) string {
+	if am.Spec.ConfigSecret == "" {
+		return prefixedName(am.Name)
+	}
+
+	return am.Spec.ConfigSecret
 }
 
 func generatedConfigSecretName(name string) string {

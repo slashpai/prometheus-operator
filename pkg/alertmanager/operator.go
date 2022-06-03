@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/blang/semver/v4"
+	"github.com/prometheus-operator/prometheus-operator/pkg/alertmanager/validation"
+	validationv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/alertmanager/validation/v1alpha1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/assets"
@@ -79,7 +81,8 @@ type Operator struct {
 
 	queue workqueue.RateLimitingInterface
 
-	metrics *operator.Metrics
+	metrics         *operator.Metrics
+	reconciliations *operator.ReconciliationTracker
 
 	config Config
 }
@@ -114,11 +117,12 @@ func New(ctx context.Context, c operator.Config, logger log.Logger, r prometheus
 	}
 
 	o := &Operator{
-		kclient: client,
-		mclient: mclient,
-		logger:  logger,
-		queue:   workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "alertmanager"),
-		metrics: operator.NewMetrics("alertmanager", r),
+		kclient:         client,
+		mclient:         mclient,
+		logger:          logger,
+		queue:           workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "alertmanager"),
+		metrics:         operator.NewMetrics("alertmanager", r),
+		reconciliations: &operator.ReconciliationTracker{},
 		config: Config{
 			Host:                         c.Host,
 			LocalHost:                    c.LocalHost,
@@ -145,6 +149,8 @@ func (c *Operator) bootstrap(ctx context.Context) error {
 	if _, err := labels.Parse(c.config.AlertManagerSelector); err != nil {
 		return errors.Wrap(err, "can not parse alertmanager selector value")
 	}
+
+	c.metrics.MustRegister(c.reconciliations)
 
 	c.alrtInfs, err = informers.NewInformersForResource(
 		informers.NewMonitoringInformerFactories(
@@ -536,8 +542,11 @@ func (c *Operator) processNextWorkItem(ctx context.Context) bool {
 	defer c.queue.Done(key)
 
 	c.metrics.ReconcileCounter().Inc()
+	startTime := time.Now()
 	err := c.sync(ctx, key.(string))
-	c.metrics.SetSyncStatus(key.(string), err == nil)
+	c.metrics.ReconcileDurationHistogram().Observe(time.Since(startTime).Seconds())
+	c.reconciliations.SetStatus(key.(string), err)
+
 	if err == nil {
 		c.queue.Forget(key)
 		return true
@@ -720,7 +729,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 	aobj, err := c.alrtInfs.Get(key)
 
 	if apierrors.IsNotFound(err) {
-		c.metrics.ForgetObject(key)
+		c.reconciliations.ForgetObject(key)
 		// Dependent resources are cleaned up by K8s via OwnerReferences
 		return nil
 	}
@@ -849,63 +858,76 @@ func createSSetInputHash(a monitoringv1.Alertmanager, c Config, tlsAssets *opera
 	return fmt.Sprintf("%d", hash), nil
 }
 
-func (c *Operator) provisionAlertmanagerConfiguration(ctx context.Context, am *monitoringv1.Alertmanager, store *assets.Store) error {
-	namespacedLogger := log.With(c.logger, "alertmanager", am.Name, "namespace", am.Namespace)
-
-	// Validate AlertManager Config Inputs at AlertManager CRD level
-	if err := validateConfigInputs(am); err != nil {
-		return err
-	}
-
-	secretName := defaultConfigSecretName(am.Name)
-	if am.Spec.ConfigSecret != "" {
-		secretName = am.Spec.ConfigSecret
-	}
-
-	// Tentatively retrieve the secret containing the user-provided Alertmanager
-	// configuration.
-	secret, err := c.kclient.CoreV1().Secrets(am.Namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return errors.Wrap(err, "get base configuration secret")
-	}
-
-	var secretData map[string][]byte
-	if secret != nil {
-		secretData = secret.Data
-	}
-
-	rawBaseConfig := []byte(`route:
+func defaultAlertmanagerConfiguration() []byte {
+	return []byte(`route:
   receiver: 'null'
 receivers:
 - name: 'null'`)
-	if len(secretData[alertmanagerConfigFile]) > 0 {
-		rawBaseConfig = secretData[alertmanagerConfigFile]
-	} else {
-		if secret == nil {
-			level.Info(namespacedLogger).Log("msg", "base config secret not found", "secret", secretName)
-		} else {
-			level.Info(namespacedLogger).
-				Log("msg", "key not found in base config secret", "secret", secretName, "key", alertmanagerConfigFile)
+}
+
+// loadConfigurationFromSecret returns the raw Alertmanager configuration and
+// additional keys from the configured secret. If the secret doesn't exist or
+// the key isn't found, it will return a working minimal data.
+func (c *Operator) loadConfigurationFromSecret(ctx context.Context, am *monitoringv1.Alertmanager) ([]byte, map[string][]byte, error) {
+	namespacedLogger := log.With(c.logger, "alertmanager", am.Name, "namespace", am.Namespace)
+
+	name := defaultConfigSecretName(am)
+
+	// Tentatively retrieve the secret containing the user-provided Alertmanager
+	// configuration.
+	secret, err := c.kclient.CoreV1().Secrets(am.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			level.Info(namespacedLogger).Log("msg", "config secret not found, using default Alertmanager configuration", "secret", name)
+			return defaultAlertmanagerConfiguration(), nil, nil
 		}
+
+		return nil, nil, err
 	}
 
-	// If no AlertmanagerConfig selectors and AlertmanagerConfiguration are configured, the user wants to
-	// manage configuration themselves.
+	if _, ok := secret.Data[alertmanagerConfigFile]; !ok {
+		level.Info(namespacedLogger).
+			Log("msg", "key not found in the config secret, using default Alertmanager configuration", "secret", name, "key", alertmanagerConfigFile)
+		return defaultAlertmanagerConfiguration(), secret.Data, nil
+	}
+
+	rawAlertmanagerConfig := secret.Data[alertmanagerConfigFile]
+	delete(secret.Data, alertmanagerConfigFile)
+
+	if len(rawAlertmanagerConfig) == 0 {
+		level.Info(namespacedLogger).
+			Log("msg", "empty configuration in the config secret, using default Alertmanager configuration", "secret", name, "key", alertmanagerConfigFile)
+		rawAlertmanagerConfig = defaultAlertmanagerConfiguration()
+	}
+
+	return rawAlertmanagerConfig, secret.Data, nil
+}
+
+func (c *Operator) provisionAlertmanagerConfiguration(ctx context.Context, am *monitoringv1.Alertmanager, store *assets.Store) error {
+	namespacedLogger := log.With(c.logger, "alertmanager", am.Name, "namespace", am.Namespace)
+
+	if err := validation.ValidateAlertmanager(am); err != nil {
+		return err
+	}
+
+	// If no AlertmanagerConfig selectors and AlertmanagerConfiguration are
+	// configured, the user wants to manage configuration themselves.
 	if am.Spec.AlertmanagerConfigSelector == nil && am.Spec.AlertmanagerConfiguration == nil {
 		level.Debug(namespacedLogger).
-			Log("msg", "no AlertmanagerConfig selector specified, copying base config as-is",
-				"base config secret", secretName, "mounted config secret", generatedConfigSecretName(am.Name))
+			Log("msg", "AlertmanagerConfigSelector and AlertmanagerConfiguration not specified, using the configuration from secret as-is",
+				"secret", defaultConfigSecretName(am))
 
-		err = c.createOrUpdateGeneratedConfigSecret(ctx, am, rawBaseConfig, secretData)
+		amRawConfiguration, additionalData, err := c.loadConfigurationFromSecret(ctx, am)
+		if err != nil {
+			return errors.Wrap(err, "failed to retrieve configuration from secret")
+		}
+
+		err = c.createOrUpdateGeneratedConfigSecret(ctx, am, amRawConfiguration, additionalData)
 		if err != nil {
 			return errors.Wrap(err, "create or update generated config secret failed")
 		}
-		return nil
-	}
 
-	baseConfig, err := alertmanagerConfigFrom(string(rawBaseConfig))
-	if err != nil {
-		return errors.Wrap(err, "base config from Secret could not be parsed")
+		return nil
 	}
 
 	amVersion := operator.StringValOrDefault(am.Spec.Version, operator.DefaultAlertmanagerVersion)
@@ -916,32 +938,56 @@ receivers:
 
 	amConfigs, err := c.selectAlertmanagerConfigs(ctx, am, version, store)
 	if err != nil {
-		return errors.Wrap(err, "selecting AlertmanagerConfigs failed")
+		return errors.Wrap(err, "failed to select AlertmanagerConfig objects")
 	}
 
-	generator := newConfigGenerator(namespacedLogger, version, store)
-	// If defined AlertmanagerConfiguration, find the global AlertmanagerConfig and generate.
-	// Otherwise work with the raw configuration secret.
+	var (
+		additionalData map[string][]byte
+		cfgBuilder     = newConfigBuilder(namespacedLogger, version, store)
+	)
+
 	if am.Spec.AlertmanagerConfiguration != nil {
+		// Load the base configuration from the referenced AlertmanagerConfig.
 		globalAmConfig, err := c.mclient.MonitoringV1alpha1().AlertmanagerConfigs(am.Namespace).
 			Get(ctx, am.Spec.AlertmanagerConfiguration.Name, metav1.GetOptions{})
 		if err != nil {
-			return errors.Wrap(err, "get AlertmanagerConfig failed")
+			return errors.Wrap(err, "failed to get global AlertmanagerConfig")
 		}
-		baseConfig, err = generator.generateGlobalConfig(ctx, globalAmConfig)
+
+		err = cfgBuilder.initializeFromAlertmanagerConfig(ctx, globalAmConfig)
 		if err != nil {
-			return errors.Wrap(err, "failed to generate global AlertmangerConfig")
+			return errors.Wrap(err, "failed to initialize from global AlertmangerConfig")
+		}
+	} else {
+		// Load the base configuration from the referenced secret.
+		var (
+			amRawConfiguration []byte
+			err                error
+		)
+
+		amRawConfiguration, additionalData, err = c.loadConfigurationFromSecret(ctx, am)
+		if err != nil {
+			return errors.Wrap(err, "failed to retrieve configuration from secret")
+		}
+
+		err = cfgBuilder.initializeFromRawConfiguration(amRawConfiguration)
+		if err != nil {
+			return errors.Wrap(err, "failed to initialize from secret")
 		}
 	}
 
-	generatedConfig, err := generator.generateConfig(ctx, *baseConfig, amConfigs)
-	if err != nil {
-		return errors.Wrap(err, "generating Alertmanager config yaml failed")
+	if err := cfgBuilder.addAlertmanagerConfigs(ctx, amConfigs); err != nil {
+		return errors.Wrap(err, "failed to generate Alertmanager configuration")
 	}
 
-	err = c.createOrUpdateGeneratedConfigSecret(ctx, am, generatedConfig, secretData)
+	generatedConfig, err := cfgBuilder.marshalJSON()
 	if err != nil {
-		return errors.Wrap(err, "create or update generated config secret failed")
+		return errors.Wrap(err, "failed to marshal configuration")
+	}
+
+	err = c.createOrUpdateGeneratedConfigSecret(ctx, am, generatedConfig, additionalData)
+	if err != nil {
+		return errors.Wrap(err, "failed to create or update the generated configuration secret")
 	}
 
 	return nil
@@ -1067,7 +1113,7 @@ func (c *Operator) selectAlertmanagerConfigs(ctx context.Context, am *monitoring
 // checkAlertmanagerConfigResource verifies that an AlertmanagerConfig object is valid
 // for the given Alertmanager version and has no missing references to other objects.
 func checkAlertmanagerConfigResource(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerConfig, amVersion semver.Version, store *assets.Store) error {
-	if err := ValidateAlertmanagerConfig(amc); err != nil {
+	if err := validationv1alpha1.ValidateAlertmanagerConfig(amc); err != nil {
 		return err
 	}
 
@@ -1176,6 +1222,11 @@ func checkReceivers(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerCon
 		if err != nil {
 			return err
 		}
+
+		err = checkTelegramConfigs(ctx, receiver.TelegramConfigs, amc.GetNamespace(), amcKey, store, amVersion)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1228,6 +1279,9 @@ func checkOpsGenieConfigs(
 		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
+		if err := checkOpsGenieResponder(ctx, config.Responders, amVersion); err != nil {
+			return err
+		}
 		opsgenieConfigKey := fmt.Sprintf("%s/opsgenie/%d", key, i)
 
 		if config.APIKey != nil {
@@ -1241,6 +1295,16 @@ func checkOpsGenieConfigs(
 		}
 	}
 
+	return nil
+}
+
+func checkOpsGenieResponder(ctx context.Context, opsgenieResponder []monitoringv1alpha1.OpsGenieConfigResponder, amVersion semver.Version) error {
+	lessThanV0_24 := amVersion.LT(semver.MustParse("0.24.0"))
+	for _, resp := range opsgenieResponder {
+		if resp.Type == "teams" && lessThanV0_24 {
+			return fmt.Errorf("'teams' set in 'opsgenieResponder' but supported in AlertManager >= 0.24.0 only")
+		}
+	}
 	return nil
 }
 
@@ -1291,7 +1355,7 @@ func checkWebhookConfigs(
 			if err != nil {
 				return err
 			}
-			if _, err := ValidateURL(strings.TrimSpace(url)); err != nil {
+			if _, err := validation.ValidateURL(strings.TrimSpace(url)); err != nil {
 				return errors.Wrapf(err, "webhook 'url' %s invalid", url)
 			}
 		}
@@ -1443,6 +1507,43 @@ func checkSnsConfigs(
 			return err
 		}
 	}
+	return nil
+}
+
+func checkTelegramConfigs(
+	ctx context.Context,
+	configs []monitoringv1alpha1.TelegramConfig,
+	namespace string,
+	key string,
+	store *assets.Store,
+	amVersion semver.Version,
+) error {
+	if len(configs) == 0 {
+		return nil
+	}
+
+	if amVersion.LT(semver.MustParse("0.24.0")) {
+		return fmt.Errorf(`telegramConfigs' is available in Alertmanager >= 0.24.0 only - current %s`, amVersion)
+	}
+
+	for i, config := range configs {
+		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+			return err
+		}
+
+		telegramConfigKey := fmt.Sprintf("%s/telegram/%d", key, i)
+
+		if config.BotToken != nil {
+			if _, err := store.GetSecretKey(ctx, namespace, *config.BotToken); err != nil {
+				return err
+			}
+		}
+
+		if err := configureHTTPConfigInStore(ctx, config.HTTPConfig, namespace, telegramConfigKey, store); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

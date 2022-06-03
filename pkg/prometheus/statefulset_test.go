@@ -1337,8 +1337,8 @@ func TestThanosSideCarVolumes(t *testing.T) {
 func TestRetentionAndRetentionSize(t *testing.T) {
 	tests := []struct {
 		version                    string
-		specRetention              string
-		specRetentionSize          string
+		specRetention              monitoringv1.Duration
+		specRetentionSize          monitoringv1.ByteSize
 		expectedRetentionArg       string
 		expectedRetentionSizeArg   string
 		shouldContainRetention     bool
@@ -2177,5 +2177,150 @@ func TestQueryLogFileVolumeMountNotPresent(t *testing.T) {
 
 	if found {
 		t.Fatal("Query log file mounted, when it shouldn't be.")
+	}
+}
+
+func TestEnableRemoteWriteReceiver(t *testing.T) {
+	for _, tc := range []struct {
+		version                         string
+		enableRemoteWriteReceiver       bool
+		expectedRemoteWriteReceiverFlag bool
+	}{
+		// Test lower version where feature not available
+		{
+			version:                   "2.32.0",
+			enableRemoteWriteReceiver: true,
+		},
+		// Test correct version from which feature available
+		{
+			version:                         "2.33.0",
+			enableRemoteWriteReceiver:       true,
+			expectedRemoteWriteReceiverFlag: true,
+		},
+		{
+			version:                         "2.33.0",
+			enableRemoteWriteReceiver:       false,
+			expectedRemoteWriteReceiverFlag: false,
+		},
+		// Test higher version from which feature available
+		{
+			version:                         "2.33.5",
+			enableRemoteWriteReceiver:       true,
+			expectedRemoteWriteReceiverFlag: true,
+		},
+	} {
+		t.Run(fmt.Sprintf("case %s", tc.version), func(t *testing.T) {
+			sset, err := makeStatefulSet("test", monitoringv1.Prometheus{
+				Spec: monitoringv1.PrometheusSpec{
+					CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
+						Version:                   tc.version,
+						EnableRemoteWriteReceiver: tc.enableRemoteWriteReceiver,
+					},
+				},
+			}, defaultTestConfig, nil, "", 0, nil)
+
+			if err != nil {
+				t.Fatalf("Unexpected error while making StatefulSet: %v", err)
+			}
+
+			found := false
+			for _, flag := range sset.Spec.Template.Spec.Containers[0].Args {
+				if flag == "--web.enable-remote-write-receiver" {
+					found = true
+					break
+				}
+			}
+
+			if found != tc.expectedRemoteWriteReceiverFlag {
+				t.Fatalf("Expecting Prometheus remote write receiver to be %t, got %t", tc.expectedRemoteWriteReceiverFlag, found)
+			}
+		})
+	}
+}
+
+func TestPodTemplateConfig(t *testing.T) {
+	nodeSelector := map[string]string{
+		"foo": "bar",
+	}
+	affinity := v1.Affinity{
+		NodeAffinity: &v1.NodeAffinity{},
+		PodAffinity: &v1.PodAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []v1.WeightedPodAffinityTerm{
+				{
+					PodAffinityTerm: v1.PodAffinityTerm{
+						Namespaces: []string{"foo"},
+					},
+					Weight: 100,
+				},
+			},
+		},
+		PodAntiAffinity: &v1.PodAntiAffinity{},
+	}
+
+	tolerations := []v1.Toleration{
+		{
+			Key: "key",
+		},
+	}
+	userid := int64(1234)
+	securityContext := v1.PodSecurityContext{
+		RunAsUser: &userid,
+	}
+	priorityClassName := "foo"
+	serviceAccountName := "prometheus-sa"
+	hostAliases := []monitoringv1.HostAlias{
+		{
+			Hostnames: []string{"foo.com"},
+			IP:        "1.1.1.1",
+		},
+	}
+	imagePullSecrets := []v1.LocalObjectReference{
+		{
+			Name: "registry-secret",
+		},
+	}
+
+	sset, err := makeStatefulSet("test", monitoringv1.Prometheus{
+		ObjectMeta: metav1.ObjectMeta{},
+		Spec: monitoringv1.PrometheusSpec{
+			CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
+				NodeSelector:       nodeSelector,
+				Affinity:           &affinity,
+				Tolerations:        tolerations,
+				SecurityContext:    &securityContext,
+				PriorityClassName:  priorityClassName,
+				ServiceAccountName: serviceAccountName,
+				HostAliases:        hostAliases,
+				ImagePullSecrets:   imagePullSecrets,
+			},
+		},
+	}, defaultTestConfig, nil, "", 0, nil)
+	if err != nil {
+		t.Fatalf("Unexpected error while making StatefulSet: %v", err)
+	}
+
+	if !reflect.DeepEqual(sset.Spec.Template.Spec.NodeSelector, nodeSelector) {
+		t.Fatalf("expected node selector to match, want %v, got %v", nodeSelector, sset.Spec.Template.Spec.NodeSelector)
+	}
+	if !reflect.DeepEqual(*sset.Spec.Template.Spec.Affinity, affinity) {
+		t.Fatalf("expected affinity to match, want %v, got %v", affinity, *sset.Spec.Template.Spec.Affinity)
+	}
+	if !reflect.DeepEqual(sset.Spec.Template.Spec.Tolerations, tolerations) {
+		t.Fatalf("expected tolerations to match, want %v, got %v", tolerations, sset.Spec.Template.Spec.Tolerations)
+	}
+	if !reflect.DeepEqual(*sset.Spec.Template.Spec.SecurityContext, securityContext) {
+		t.Fatalf("expected security context  to match, want %v, got %v", securityContext, *sset.Spec.Template.Spec.SecurityContext)
+	}
+	if sset.Spec.Template.Spec.PriorityClassName != priorityClassName {
+		t.Fatalf("expected priority class name to match, want %s, got %s", priorityClassName, sset.Spec.Template.Spec.PriorityClassName)
+	}
+	if sset.Spec.Template.Spec.ServiceAccountName != serviceAccountName {
+		t.Fatalf("expected service account name to match, want %s, got %s", serviceAccountName, sset.Spec.Template.Spec.ServiceAccountName)
+	}
+	if len(sset.Spec.Template.Spec.HostAliases) != len(hostAliases) {
+		t.Fatalf("expected length of host aliases to match, want %d, got %d", len(hostAliases), len(sset.Spec.Template.Spec.HostAliases))
+	}
+	if !reflect.DeepEqual(sset.Spec.Template.Spec.ImagePullSecrets, imagePullSecrets) {
+		t.Fatalf("expected image pull secrets to match, want %s, got %s", imagePullSecrets, sset.Spec.Template.Spec.ImagePullSecrets)
 	}
 }
