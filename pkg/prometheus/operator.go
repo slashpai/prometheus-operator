@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/asaskevich/govalidator"
+	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/mitchellh/hashstructure"
@@ -1452,7 +1453,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 			return err
 		}
 
-		sset, err := makeStatefulSet(ssetName, *p, &c.config, ruleConfigMapNames, newSSetInputHash, int32(shard), tlsAssets.ShardNames())
+		sset, err := makeStatefulSet(logger, ssetName, *p, &c.config, ruleConfigMapNames, newSSetInputHash, int32(shard), tlsAssets.ShardNames())
 		if err != nil {
 			return errors.Wrap(err, "making statefulset failed")
 		}
@@ -2112,7 +2113,6 @@ func newTLSAssetSecret(p *monitoringv1.Prometheus, labels map[string]string) *v1
 
 func (c *Operator) createOrUpdateWebConfigSecret(ctx context.Context, p *monitoringv1.Prometheus) error {
 	boolTrue := true
-	client := c.kclient.CoreV1().Secrets(p.Namespace)
 
 	var tlsConfig *monitoringv1.WebTLSConfig
 	if p.Spec.Web != nil {
@@ -2121,13 +2121,14 @@ func (c *Operator) createOrUpdateWebConfigSecret(ctx context.Context, p *monitor
 
 	webConfig, err := webconfig.New(
 		webConfigDir,
-		WebConfigSecretName(p.Name),
+		webConfigSecretName(p.Name),
 		tlsConfig,
 	)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to initialize web config")
 	}
 
+	secretClient := c.kclient.CoreV1().Secrets(p.Namespace)
 	ownerReference := metav1.OwnerReference{
 		APIVersion:         p.APIVersion,
 		BlockOwnerDeletion: &boolTrue,
@@ -2136,19 +2137,13 @@ func (c *Operator) createOrUpdateWebConfigSecret(ctx context.Context, p *monitor
 		Name:               p.Name,
 		UID:                p.UID,
 	}
-
 	secretLabels := c.config.Labels.Merge(managedByOperatorLabels)
-	secret, err := webConfig.MakeConfigFileSecret(secretLabels, ownerReference)
-	if err != nil {
-		return err
+
+	if err := webConfig.CreateOrUpdateWebConfigSecret(ctx, secretClient, secretLabels, ownerReference); err != nil {
+		return errors.Wrap(err, "failed to reconcile web config secret")
 	}
 
-	err = k8sutil.CreateOrUpdateSecret(ctx, client, secret)
-	if err != nil {
-		return errors.Wrap(err, "failed to create web config for Prometheus")
-	}
-
-	return err
+	return nil
 }
 
 func (c *Operator) selectServiceMonitors(ctx context.Context, p *monitoringv1.Prometheus, store *assets.Store) (map[string]*monitoringv1.ServiceMonitor, error) {
@@ -2235,7 +2230,7 @@ func (c *Operator) selectServiceMonitors(ctx context.Context, p *monitoringv1.Pr
 
 			for _, rl := range endpoint.RelabelConfigs {
 				if rl.Action != "" {
-					if err = validateRelabelConfig(*rl); err != nil {
+					if err = validateRelabelConfig(*p, *rl); err != nil {
 						break
 					}
 				}
@@ -2243,7 +2238,7 @@ func (c *Operator) selectServiceMonitors(ctx context.Context, p *monitoringv1.Pr
 
 			for _, rl := range endpoint.MetricRelabelConfigs {
 				if rl.Action != "" {
-					if err = validateRelabelConfig(*rl); err != nil {
+					if err = validateRelabelConfig(*p, *rl); err != nil {
 						break
 					}
 				}
@@ -2355,7 +2350,7 @@ func (c *Operator) selectPodMonitors(ctx context.Context, p *monitoringv1.Promet
 
 			for _, rl := range endpoint.RelabelConfigs {
 				if rl.Action != "" {
-					if err = validateRelabelConfig(*rl); err != nil {
+					if err = validateRelabelConfig(*p, *rl); err != nil {
 						break
 					}
 				}
@@ -2363,7 +2358,7 @@ func (c *Operator) selectPodMonitors(ctx context.Context, p *monitoringv1.Promet
 
 			for _, rl := range endpoint.MetricRelabelConfigs {
 				if rl.Action != "" {
-					if err = validateRelabelConfig(*rl); err != nil {
+					if err = validateRelabelConfig(*p, *rl); err != nil {
 						break
 					}
 				}
@@ -2492,7 +2487,7 @@ func (c *Operator) selectProbes(ctx context.Context, p *monitoringv1.Prometheus,
 
 		for _, rl := range probe.Spec.MetricRelabelConfigs {
 			if rl.Action != "" {
-				if err = validateRelabelConfig(*rl); err != nil {
+				if err = validateRelabelConfig(*p, *rl); err != nil {
 					rejectFn(probe, err)
 					continue
 				}
@@ -2575,26 +2570,45 @@ func validateRemoteWriteSpec(spec monitoringv1.RemoteWriteSpec) error {
 	return nil
 }
 
-func validateRelabelConfig(rc monitoringv1.RelabelConfig) error {
+func validateRelabelConfig(p monitoringv1.Prometheus, rc monitoringv1.RelabelConfig) error {
 	relabelTarget := regexp.MustCompile(`^(?:(?:[a-zA-Z_]|\$(?:\{\w+\}|\w+))+\w*)+$`)
+	promVersion := operator.StringValOrDefault(p.Spec.Version, operator.DefaultPrometheusVersion)
+	version, err := semver.ParseTolerant(promVersion)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse Prometheus version")
+	}
+	minimumVersion := version.GTE(semver.MustParse("2.36.0"))
+
+	if (rc.Action == string(relabel.Lowercase) || rc.Action == string(relabel.Uppercase)) && !minimumVersion {
+		return errors.Errorf("%s relabel action is only supported from Prometheus version 2.36.0", rc.Action)
+	}
 
 	if _, err := relabel.NewRegexp(rc.Regex); err != nil {
 		return errors.Wrapf(err, "invalid regex %s for relabel configuration", rc.Regex)
 	}
+
 	if rc.Modulus == 0 && rc.Action == string(relabel.HashMod) {
 		return errors.Errorf("relabel configuration for hashmod requires non-zero modulus")
 	}
-	if (rc.Action == string(relabel.Replace) || rc.Action == string(relabel.HashMod)) && rc.TargetLabel == "" {
+
+	if (rc.Action == string(relabel.Replace) || rc.Action == string(relabel.HashMod) || rc.Action == string(relabel.Lowercase) || rc.Action == string(relabel.Uppercase)) && rc.TargetLabel == "" {
 		return errors.Errorf("relabel configuration for %s action needs targetLabel value", rc.Action)
 	}
-	if rc.Action == string(relabel.Replace) && !relabelTarget.MatchString(rc.TargetLabel) {
+
+	if (rc.Action == string(relabel.Replace) || rc.Action == string(relabel.Lowercase) || rc.Action == string(relabel.Uppercase)) && !relabelTarget.MatchString(rc.TargetLabel) {
 		return errors.Errorf("%q is invalid 'target_label' for %s action", rc.TargetLabel, rc.Action)
 	}
+
+	if (rc.Action == string(relabel.Lowercase) || rc.Action == string(relabel.Uppercase)) && !(rc.Replacement == relabel.DefaultRelabelConfig.Replacement || rc.Replacement == "") {
+		return errors.Errorf("'replacement' can not be set for %s action", rc.Action)
+	}
+
 	if rc.Action == string(relabel.LabelMap) {
 		if rc.Replacement != "" && !relabelTarget.MatchString(rc.Replacement) {
 			return errors.Errorf("%q is invalid 'replacement' for %s action", rc.Replacement, rc.Action)
 		}
 	}
+
 	if rc.Action == string(relabel.HashMod) && !model.LabelName(rc.TargetLabel).IsValid() {
 		return errors.Errorf("%q is invalid 'target_label' for %s action", rc.TargetLabel, rc.Action)
 	}

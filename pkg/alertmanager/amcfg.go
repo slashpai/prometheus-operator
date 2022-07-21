@@ -326,6 +326,9 @@ func (cb *configBuilder) getValidURLFromSecret(ctx context.Context, namespace st
 }
 
 func (cb *configBuilder) convertRoute(in *monitoringv1alpha1.Route, crKey types.NamespacedName) *route {
+	if in == nil {
+		return nil
+	}
 	var matchers []string
 
 	// deprecated
@@ -843,7 +846,7 @@ func (cb *configBuilder) convertEmailConfig(ctx context.Context, in monitoringv1
 	if l := len(in.Headers); l > 0 {
 		headers := make(map[string]string, l)
 		for _, d := range in.Headers {
-			headers[strings.Title(d.Key)] = d.Value
+			headers[d.Key] = d.Value
 		}
 		out.Headers = headers
 	}
@@ -1463,7 +1466,7 @@ func (ogc *opsgenieConfig) sanitize(amVersion semver.Version, logger log.Logger)
 		}
 	}
 
-	if ogc.APIKey != "" {
+	if ogc.APIKey != "" && ogc.APIKeyFile != "" {
 		level.Warn(logger).Log("msg", "'api_key' and 'api_key_file' are mutually exclusive for OpsGenie receiver config - 'api_key' has taken precedence")
 		ogc.APIKeyFile = ""
 	}
