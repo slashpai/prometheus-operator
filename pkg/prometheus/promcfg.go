@@ -447,6 +447,7 @@ func validateConfigInputs(p *v1.Prometheus) error {
 		}
 	}
 
+	// TODO(slashpai): Remove this validation after v0.60 since this is handled at CRD level
 	if p.Spec.Alerting != nil {
 		for i, ap := range p.Spec.Alerting.Alertmanagers {
 			if ap.Timeout != nil && *ap.Timeout != "" {
@@ -607,6 +608,11 @@ func (cg *ConfigGenerator) Generate(
 		Value: append(scrapeConfigs, addlScrapeConfigs...),
 	})
 
+	cfg, err = cg.appendStorageSettingsConfig(cfg, p)
+	if err != nil {
+		return nil, errors.Wrap(err, "generating storage_settings configuration failed")
+	}
+
 	cfg, err = cg.appendAlertingConfig(cfg, p, additionalAlertRelabelConfigs, additionalAlertManagerConfigs, store)
 	if err != nil {
 		return nil, errors.Wrap(err, "generating alerting configuration failed")
@@ -621,6 +627,26 @@ func (cg *ConfigGenerator) Generate(
 	}
 
 	return yaml.Marshal(cfg)
+}
+
+func (cg *ConfigGenerator) appendStorageSettingsConfig(cfg yaml.MapSlice, p *v1.Prometheus) (yaml.MapSlice, error) {
+	if p.Spec.Exemplars == nil || p.Spec.Exemplars.MaxSize == nil {
+		return cfg, nil
+	}
+
+	cfg = cg.WithMinimumVersion("2.29.0").AppendMapItem(cfg, "storage", yaml.MapSlice{
+		{
+			Key: "exemplars",
+			Value: yaml.MapSlice{
+				{
+					Key:   "max_exemplars",
+					Value: *p.Spec.Exemplars.MaxSize,
+				},
+			},
+		},
+	})
+
+	return cfg, nil
 }
 
 func (cg *ConfigGenerator) appendAlertingConfig(
@@ -727,7 +753,9 @@ func (cg *ConfigGenerator) generatePodMonitorConfig(
 	if ep.FollowRedirects != nil {
 		cfg = cg.WithMinimumVersion("2.26.0").AppendMapItem(cfg, "follow_redirects", *ep.FollowRedirects)
 	}
-
+	if ep.EnableHttp2 != nil {
+		cfg = cg.WithMinimumVersion("2.35.0").AppendMapItem(cfg, "enable_http2", *ep.EnableHttp2)
+	}
 	if ep.TLSConfig != nil {
 		cfg = addSafeTLStoYaml(cfg, m.Namespace, ep.TLSConfig.SafeTLSConfig)
 	}
@@ -923,6 +951,7 @@ func (cg *ConfigGenerator) generateProbeConfig(
 	hTs := true
 	cfg = cg.AddHonorTimestamps(cfg, &hTs)
 
+	// TODO(slashpai): Remove this assignment after v0.60 since this is handled at CRD level
 	path := "/probe"
 	if m.Spec.ProberSpec.Path != "" {
 		path = m.Spec.ProberSpec.Path
@@ -1190,7 +1219,9 @@ func (cg *ConfigGenerator) generateServiceMonitorConfig(
 	if ep.FollowRedirects != nil {
 		cfg = cg.WithMinimumVersion("2.26.0").AppendMapItem(cfg, "follow_redirects", *ep.FollowRedirects)
 	}
-
+	if ep.EnableHttp2 != nil {
+		cfg = cg.WithMinimumVersion("2.35.0").AppendMapItem(cfg, "enable_http2", *ep.EnableHttp2)
+	}
 	assetKey := fmt.Sprintf("serviceMonitor/%s/%s/%d", m.Namespace, m.Name, i)
 	cfg = cg.addOAuth2ToYaml(cfg, ep.OAuth2, store.OAuth2Assets, assetKey)
 
@@ -1468,7 +1499,7 @@ func generateRelabelConfig(rc []*v1.RelabelConfig) []yaml.MapSlice {
 		}
 
 		if c.Action != "" {
-			relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+			relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: strings.ToLower(c.Action)})
 		}
 
 		cfg = append(cfg, relabeling)
@@ -1837,7 +1868,7 @@ func (cg *ConfigGenerator) generateRemoteWriteConfig(
 				}
 
 				if c.Action != "" {
-					relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: c.Action})
+					relabeling = append(relabeling, yaml.MapItem{Key: "action", Value: strings.ToLower(c.Action)})
 				}
 				relabelings = append(relabelings, relabeling)
 			}

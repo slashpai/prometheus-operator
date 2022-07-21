@@ -152,6 +152,7 @@ func TestAllNS(t *testing.T) {
 func testAllNSAlertmanager(t *testing.T) {
 	skipAlertmanagerTests(t)
 	testFuncs := map[string]func(t *testing.T){
+		"AlertmanagerCRD":                         testAlertmanagerCRDValidation,
 		"AMCreateDeleteCluster":                   testAMCreateDeleteCluster,
 		"AMScaling":                               testAMScaling,
 		"AMVersionMigration":                      testAMVersionMigration,
@@ -169,6 +170,7 @@ func testAllNSAlertmanager(t *testing.T) {
 		"AMPreserveUserAddedMetadata":             testAMPreserveUserAddedMetadata,
 		"AMRollbackManualChanges":                 testAMRollbackManualChanges,
 		"AMMinReadySeconds":                       testAlertManagerMinReadySeconds,
+		"AMWebTLS":                                testAMWebTLS,
 	}
 
 	for name, f := range testFuncs {
