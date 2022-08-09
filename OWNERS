@@ -4,21 +4,21 @@ reviewers:
 - bwplotka
 - simonpasquier
 - slashpai
-- arajkumar
 - sthaha
 - raptorsun
 - jan--f
 - JoaoBraveCoding
+- juanrh
 
 approvers:
 - bwplotka
 - simonpasquier
 - slashpai
-- arajkumar
 - sthaha
 - raptorsun
 - jan--f
 - JoaoBraveCoding
+- juanrh
 
 emeritus_approvers:
 - dgrisonnet
@@ -33,3 +33,4 @@ emeritus_approvers:
 - prashbnair
 - PhilipGough
 - bison
+- arajkumar
