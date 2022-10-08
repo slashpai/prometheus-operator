@@ -1,4 +1,4 @@
-// Copyright (c) 2021 Uber Technologies, Inc.
+// Copyright (c) 2022 Uber Technologies, Inc.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -18,21 +18,44 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//go:build !go1.16
-// +build !go1.16
+//go:build go1.19
+// +build go1.19
 
-package goleak
+package atomic
 
-import (
-	"strings"
+import "sync/atomic"
 
-	"go.uber.org/goleak/internal/stack"
-)
+// Pointer is an atomic pointer of type *T.
+type Pointer[T any] struct {
+	_ nocmp // disallow non-atomic comparison
+	p atomic.Pointer[T]
+}
 
-func isTraceStack(s stack.Stack) bool {
-	if f := s.FirstFunction(); f != "runtime.goparkunlock" {
-		return false
+// NewPointer creates a new Pointer.
+func NewPointer[T any](v *T) *Pointer[T] {
+	var p Pointer[T]
+	if v != nil {
+		p.p.Store(v)
 	}
+	return &p
+}
 
-	return strings.Contains(s.Full(), "runtime.ReadTrace")
+// Load atomically loads the wrapped value.
+func (p *Pointer[T]) Load() *T {
+	return p.p.Load()
+}
+
+// Store atomically stores the passed value.
+func (p *Pointer[T]) Store(val *T) {
+	p.p.Store(val)
+}
+
+// Swap atomically swaps the wrapped pointer and returns the old value.
+func (p *Pointer[T]) Swap(val *T) (old *T) {
+	return p.p.Swap(val)
+}
+
+// CompareAndSwap is an atomic compare-and-swap.
+func (p *Pointer[T]) CompareAndSwap(old, new *T) (swapped bool) {
+	return p.p.CompareAndSwap(old, new)
 }
