@@ -1855,7 +1855,7 @@
                             type: 'array',
                           },
                           apiURL: {
-                            description: "The secret's key that contains the Slack webhook URL. The secret needs to be in the same namespace as the AlertmanagerConfig object and accessible by the Prometheus Operator.",
+                            description: "The secret's key that contains the Slack webhook URL. The secret needs to be in the same namespace as the AlertmanagerConfig object and accessible by the Prometheus Operator. Either APIURL or APIURLFile should be set.",
                             properties: {
                               key: {
                                 description: 'The key of the secret to select from.  Must be a valid secret key.',
@@ -1873,6 +1873,10 @@
                               'name',
                             ],
                             type: 'object',
+                          },
+                          apiURLFile: {
+                            description: "File path on the disk containing the Slack's webhook URL",
+                            type: 'string',
                           },
                           callbackId: {
                             type: 'string',

@@ -1887,7 +1887,8 @@ spec:
                             description: The secret's key that contains the Slack
                               webhook URL. The secret needs to be in the same namespace
                               as the AlertmanagerConfig object and accessible by the
-                              Prometheus Operator.
+                              Prometheus Operator. Either APIURL or APIURLFile should
+                              be set.
                             properties:
                               key:
                                 description: The key of the secret to select from.  Must
@@ -1905,6 +1906,10 @@ spec:
                             required:
                             - key
                             type: object
+                          apiURLFile:
+                            description: File path on the disk containing the Slack's
+                              webhook URL
+                            type: string
                           callbackId:
                             type: string
                           channel:

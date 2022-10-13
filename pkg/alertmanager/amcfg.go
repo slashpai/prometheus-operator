@@ -621,6 +621,10 @@ func (cb *configBuilder) convertSlackConfig(ctx context.Context, in monitoringv1
 		out.APIURL = url
 	}
 
+	if in.APIURLFile != "" {
+		out.APIURLFile = in.APIURLFile
+	}
+
 	var actions []slackAction
 	if l := len(in.Actions); l > 0 {
 		actions = make([]slackAction, l)

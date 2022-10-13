@@ -14638,7 +14638,20 @@ Kubernetes core/v1.SecretKeySelector
 <em>(Optional)</em>
 <p>The secret&rsquo;s key that contains the Slack webhook URL.
 The secret needs to be in the same namespace as the AlertmanagerConfig
-object and accessible by the Prometheus Operator.</p>
+object and accessible by the Prometheus Operator.
+Either APIURL or APIURLFile should be set.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>apiURLFile</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>File path on the disk containing the Slack&rsquo;s webhook URL</p>
 </td>
 </tr>
 <tr>
@@ -17907,7 +17920,20 @@ SecretKeySelector
 <em>(Optional)</em>
 <p>The secret&rsquo;s key that contains the Slack webhook URL.
 The secret needs to be in the same namespace as the AlertmanagerConfig
-object and accessible by the Prometheus Operator.</p>
+object and accessible by the Prometheus Operator.
+Either APIURL or APIURLFile should be set.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>apiURLFile</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>File path on the disk containing the Slack&rsquo;s webhook URL</p>
 </td>
 </tr>
 <tr>

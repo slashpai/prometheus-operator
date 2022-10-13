@@ -262,8 +262,12 @@ type SlackConfig struct {
 	// The secret's key that contains the Slack webhook URL.
 	// The secret needs to be in the same namespace as the AlertmanagerConfig
 	// object and accessible by the Prometheus Operator.
+	// Either APIURL or APIURLFile should be set.
 	// +optional
 	APIURL *v1.SecretKeySelector `json:"apiURL,omitempty"`
+	// File path on the disk containing the Slack's webhook URL
+	// +optional
+	APIURLFile string `json:"apiURLFile,omitempty"`
 	// The channel or user to send notifications to.
 	// +optional
 	Channel string `json:"channel,omitempty"`
