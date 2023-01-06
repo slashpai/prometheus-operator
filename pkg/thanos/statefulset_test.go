@@ -753,6 +753,7 @@ func TestPodTemplateConfig(t *testing.T) {
 			Name: "registry-secret",
 		},
 	}
+	imagePullPolicy := v1.PullAlways
 
 	sset, err := makeStatefulSet(&monitoringv1.ThanosRuler{
 		ObjectMeta: metav1.ObjectMeta{},
@@ -766,6 +767,7 @@ func TestPodTemplateConfig(t *testing.T) {
 			ServiceAccountName: serviceAccountName,
 			HostAliases:        hostAliases,
 			ImagePullSecrets:   imagePullSecrets,
+			ImagePullPolicy:    imagePullPolicy,
 		},
 	}, defaultTestConfig, nil, "")
 	if err != nil {
@@ -795,6 +797,16 @@ func TestPodTemplateConfig(t *testing.T) {
 	}
 	if !reflect.DeepEqual(sset.Spec.Template.Spec.ImagePullSecrets, imagePullSecrets) {
 		t.Fatalf("expected image pull secrets to match, want %s, got %s", imagePullSecrets, sset.Spec.Template.Spec.ImagePullSecrets)
+	}
+	for _, initContainer := range sset.Spec.Template.Spec.InitContainers {
+		if !reflect.DeepEqual(initContainer.ImagePullPolicy, imagePullPolicy) {
+			t.Fatalf("expected imagePullPolicy to match, want %s, got %s", imagePullPolicy, sset.Spec.Template.Spec.Containers[0].ImagePullPolicy)
+		}
+	}
+	for _, container := range sset.Spec.Template.Spec.Containers {
+		if !reflect.DeepEqual(container.ImagePullPolicy, imagePullPolicy) {
+			t.Fatalf("expected imagePullPolicy to match, want %s, got %s", imagePullPolicy, sset.Spec.Template.Spec.Containers[0].ImagePullPolicy)
+		}
 	}
 }
 
@@ -1254,5 +1266,40 @@ func TestStatefulSetEphemeral(t *testing.T) {
 	if ssetVolumes[len(ssetVolumes)-1].VolumeSource.Ephemeral == nil ||
 		!reflect.DeepEqual(ephemeral.VolumeClaimTemplate.Spec.StorageClassName, ssetVolumes[len(ssetVolumes)-1].VolumeSource.Ephemeral.VolumeClaimTemplate.Spec.StorageClassName) {
 		t.Fatal("Error adding Ephemeral Spec to StatefulSetSpec")
+	}
+}
+
+func TestThanosVersion(t *testing.T) {
+	thanosBaseImage := defaultTestConfig.ThanosDefaultBaseImage
+	for _, tc := range []struct {
+		version       string
+		expectedImage string
+		expectedError bool
+	}{
+		{"v0.29.0", thanosBaseImage + ":" + "v0.29.0", false},
+		{"0.29.0", thanosBaseImage + ":" + "0.29.0", false},
+		{"", thanosBaseImage + ":" + operator.DefaultThanosVersion, false},
+		{"0.29.0-0123", "", true},
+		{"0.29.0.DEV", "", true},
+	} {
+		t.Run(string(tc.version), func(t *testing.T) {
+			sset, err := makeStatefulSet(&monitoringv1.ThanosRuler{
+				Spec: monitoringv1.ThanosRulerSpec{
+					QueryEndpoints: emptyQueryEndpoints,
+					Version:        tc.version,
+				},
+			}, defaultTestConfig, nil, "")
+
+			if tc.expectedError && err == nil {
+				t.Fatal("expected error but got nil")
+			}
+
+			if !tc.expectedError {
+				image := sset.Spec.Template.Spec.Containers[0].Image
+				if image != tc.expectedImage {
+					t.Fatalf("Unexpected container image.\n\nExpected: %s\n\nGot: %s", tc.expectedImage, image)
+				}
+			}
+		})
 	}
 }
