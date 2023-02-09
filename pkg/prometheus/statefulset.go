@@ -385,8 +385,14 @@ func makeStatefulSetSpec(
 		}
 	}
 
-	if p.Spec.Web != nil && p.Spec.Web.PageTitle != nil {
-		promArgs = cg.WithMinimumVersion("2.6.0").AppendCommandlineArgument(promArgs, monitoringv1.Argument{Name: "web.page-title", Value: *p.Spec.Web.PageTitle})
+	if p.Spec.Web != nil {
+		if p.Spec.Web.PageTitle != nil {
+			promArgs = cg.WithMinimumVersion("2.6.0").AppendCommandlineArgument(promArgs, monitoringv1.Argument{Name: "web.page-title", Value: *p.Spec.Web.PageTitle})
+		}
+
+		if p.Spec.Web.MaxConnections != nil {
+			promArgs = append(promArgs, monitoringv1.Argument{Name: "web.max-connections", Value: fmt.Sprintf("%d", *p.Spec.Web.MaxConnections)})
+		}
 	}
 
 	if p.Spec.EnableAdminAPI {
@@ -474,7 +480,10 @@ func makeStatefulSetSpec(
 		{
 			Name: "config-out",
 			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
+				EmptyDir: &v1.EmptyDirVolumeSource{
+					// tmpfs is used here to avoid writing sensitive data into disk.
+					Medium: v1.StorageMediumMemory,
+				},
 			},
 		},
 	}
@@ -563,7 +572,7 @@ func makeStatefulSetSpec(
 	// Mount related secrets
 	rn := k8sutil.NewResourceNamerWithPrefix("secret")
 	for _, s := range p.Spec.Secrets {
-		name, err := rn.VolumeName(s)
+		name, err := rn.DNS1123Label(s)
 		if err != nil {
 			return nil, err
 		}
@@ -585,7 +594,7 @@ func makeStatefulSetSpec(
 
 	rn = k8sutil.NewResourceNamerWithPrefix("configmap")
 	for _, c := range p.Spec.ConfigMaps {
-		name, err := rn.VolumeName(c)
+		name, err := rn.DNS1123Label(c)
 		if err != nil {
 			return nil, err
 		}
@@ -848,7 +857,7 @@ func makeStatefulSetSpec(
 			thanosArgs = append(thanosArgs, monitoringv1.Argument{Name: "prometheus.ready_timeout", Value: string(p.Spec.Thanos.ReadyTimeout)})
 		}
 
-		containerArgs, err := buildArgs(thanosArgs, p.Spec.Thanos.AdditionalArgs)
+		containerArgs, err := operator.BuildArgs(thanosArgs, p.Spec.Thanos.AdditionalArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -892,7 +901,7 @@ func makeStatefulSetSpec(
 	operatorInitContainers = append(operatorInitContainers,
 		operator.CreateConfigReloader(
 			"init-config-reloader",
-			operator.ReloaderResources(c.ReloaderConfig),
+			operator.ReloaderConfig(c.ReloaderConfig),
 			operator.ReloaderRunOnce(),
 			operator.LogFormat(p.Spec.LogFormat),
 			operator.LogLevel(p.Spec.LogLevel),
@@ -910,7 +919,7 @@ func makeStatefulSetSpec(
 		return nil, errors.Wrap(err, "failed to merge init containers spec")
 	}
 
-	containerArgs, err := buildArgs(promArgs, p.Spec.AdditionalArgs)
+	containerArgs, err := operator.BuildArgs(promArgs, p.Spec.AdditionalArgs)
 
 	if err != nil {
 		return nil, err
@@ -941,7 +950,7 @@ func makeStatefulSetSpec(
 		},
 		operator.CreateConfigReloader(
 			"config-reloader",
-			operator.ReloaderResources(c.ReloaderConfig),
+			operator.ReloaderConfig(c.ReloaderConfig),
 			operator.ReloaderURL(url.URL{
 				Scheme: prometheusURIScheme,
 				Host:   c.LocalHost + ":9090",
@@ -1066,63 +1075,4 @@ func queryLogFilePath(p *monitoringv1.Prometheus) string {
 	}
 
 	return filepath.Join(defaultQueryLogDirectory, p.Spec.QueryLogFile)
-}
-
-func intersection(a, b []string) (i []string) {
-	m := make(map[string]struct{})
-
-	for _, item := range a {
-		m[item] = struct{}{}
-	}
-
-	for _, item := range b {
-		if _, ok := m[item]; ok {
-			i = append(i, item)
-		}
-
-		negatedItem := strings.TrimPrefix(item, "no-")
-		if item == negatedItem {
-			negatedItem = fmt.Sprintf("no-%s", item)
-		}
-
-		if _, ok := m[negatedItem]; ok {
-			i = append(i, item)
-		}
-	}
-	return i
-}
-
-func extractArgKeys(args []monitoringv1.Argument) []string {
-	var k []string
-	for _, arg := range args {
-		key := arg.Name
-		k = append(k, key)
-	}
-
-	return k
-}
-
-func buildArgs(args []monitoringv1.Argument, additionalArgs []monitoringv1.Argument) ([]string, error) {
-	var containerArgs []string
-
-	argKeys := extractArgKeys(args)
-	additionalArgKeys := extractArgKeys(additionalArgs)
-
-	i := intersection(argKeys, additionalArgKeys)
-	if len(i) > 0 {
-		return nil, errors.Errorf("can't set arguments which are already managed by the operator: %s", strings.Join(i, ","))
-	}
-
-	args = append(args, additionalArgs...)
-
-	for _, arg := range args {
-		if arg.Value != "" {
-			containerArgs = append(containerArgs, fmt.Sprintf("--%s=%s", arg.Name, arg.Value))
-		} else {
-			containerArgs = append(containerArgs, fmt.Sprintf("--%s", arg.Name))
-
-		}
-	}
-
-	return containerArgs, nil
 }

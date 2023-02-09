@@ -465,7 +465,10 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 		{
 			Name: "config-out",
 			VolumeSource: v1.VolumeSource{
-				EmptyDir: &v1.EmptyDirVolumeSource{},
+				EmptyDir: &v1.EmptyDirVolumeSource{
+					// tmpfs is used here to avoid writing sensitive data into disk.
+					Medium: v1.StorageMediumMemory,
+				},
 			},
 		},
 	}
@@ -561,7 +564,7 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 
 	rn := k8sutil.NewResourceNamerWithPrefix("secret")
 	for _, s := range a.Spec.Secrets {
-		name, err := rn.VolumeName(s)
+		name, err := rn.DNS1123Label(s)
 		if err != nil {
 			return nil, err
 		}
@@ -587,7 +590,7 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 
 	rn = k8sutil.NewResourceNamerWithPrefix("configmap")
 	for _, c := range a.Spec.ConfigMaps {
-		name, err := rn.VolumeName(c)
+		name, err := rn.DNS1123Label(c)
 		if err != nil {
 			return nil, err
 		}
@@ -683,7 +686,7 @@ func makeStatefulSetSpec(a *monitoringv1.Alertmanager, config Config, tlsAssetSe
 		},
 		operator.CreateConfigReloader(
 			"config-reloader",
-			operator.ReloaderResources(config.ReloaderConfig),
+			operator.ReloaderConfig(config.ReloaderConfig),
 			operator.ReloaderURL(url.URL{
 				Scheme: alertmanagerURIScheme,
 				Host:   config.LocalHost + ":9093",
