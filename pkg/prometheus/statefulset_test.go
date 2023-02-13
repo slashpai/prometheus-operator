@@ -38,16 +38,10 @@ import (
 
 var (
 	defaultTestConfig = &operator.Config{
-		LocalHost: "localhost",
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos",
+		LocalHost:                  "localhost",
+		ReloaderConfig:             operator.DefaultReloaderTestConfig.ReloaderConfig,
+		PrometheusDefaultBaseImage: operator.DefaultPrometheusBaseImage,
+		ThanosDefaultBaseImage:     operator.DefaultThanosBaseImage,
 	}
 )
 
@@ -364,7 +358,9 @@ func TestStatefulSetVolumeInitial(t *testing.T) {
 						{
 							Name: "config-out",
 							VolumeSource: v1.VolumeSource{
-								EmptyDir: &v1.EmptyDirVolumeSource{},
+								EmptyDir: &v1.EmptyDirVolumeSource{
+									Medium: v1.StorageMediumMemory,
+								},
 							},
 						},
 						{
@@ -824,13 +820,7 @@ func TestTagAndShaAndVersion(t *testing.T) {
 
 func TestPrometheusDefaultBaseImageFlag(t *testing.T) {
 	operatorConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
+		ReloaderConfig:             defaultTestConfig.ReloaderConfig,
 		PrometheusDefaultBaseImage: "nondefaultuseflag/quay.io/prometheus/prometheus",
 		ThanosDefaultBaseImage:     "nondefaultuseflag/quay.io/thanos/thanos",
 	}
@@ -864,13 +854,7 @@ func TestPrometheusDefaultBaseImageFlag(t *testing.T) {
 
 func TestThanosDefaultBaseImageFlag(t *testing.T) {
 	thanosBaseImageConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
+		ReloaderConfig:             defaultTestConfig.ReloaderConfig,
 		PrometheusDefaultBaseImage: "nondefaultuseflag/quay.io/prometheus/prometheus",
 		ThanosDefaultBaseImage:     "nondefaultuseflag/quay.io/thanos/thanos",
 	}
@@ -1388,13 +1372,7 @@ func TestRetentionAndRetentionSize(t *testing.T) {
 
 func TestReplicasConfigurationWithSharding(t *testing.T) {
 	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "0",
-			CPULimit:      "0",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
+		ReloaderConfig:             defaultTestConfig.ReloaderConfig,
 		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
 		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
 	}
@@ -1435,344 +1413,26 @@ func TestReplicasConfigurationWithSharding(t *testing.T) {
 	}
 }
 
-func TestSidecarsNoResources(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "0",
-			CPULimit:      "0",
-			MemoryRequest: "0",
-			MemoryLimit:   "0",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits:   v1.ResourceList{},
-		Requests: v1.ResourceList{},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
+func TestSidecarResources(t *testing.T) {
+	operator.TestSidecarsResources(t, func(reloaderConfig operator.ContainerConfig) *appsv1.StatefulSet {
+		testConfig := &operator.Config{
+			ReloaderConfig:             reloaderConfig,
+			PrometheusDefaultBaseImage: defaultTestConfig.PrometheusDefaultBaseImage,
+			ThanosDefaultBaseImage:     defaultTestConfig.ThanosDefaultBaseImage,
 		}
-	}
-}
-
-func TestSidecarsNoRequests(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "0",
-			CPULimit:      "100m",
-			MemoryRequest: "0",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-		Requests: v1.ResourceList{},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
+		logger := newLogger()
+		p := monitoringv1.Prometheus{
+			Spec: monitoringv1.PrometheusSpec{},
 		}
-	}
-}
 
-func TestSidecarsNoLimits(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "0",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "0",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
+		cg, err := NewConfigGenerator(logger, &p, false)
+		require.NoError(t, err)
 
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
+		sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
+		require.NoError(t, err)
+		return sset
+	})
 
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoCPUResources(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "0",
-			CPULimit:      "0",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoCPURequests(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "0",
-			CPULimit:      "100m",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoCPULimits(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "0",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoMemoryResources(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "0",
-			MemoryLimit:   "0",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU: resource.MustParse("100m"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU: resource.MustParse("100m"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoMemoryRequests(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "0",
-			MemoryLimit:   "50Mi",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU: resource.MustParse("100m"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
-}
-
-func TestSidecarsNoMemoryLimits(t *testing.T) {
-	testConfig := &operator.Config{
-		ReloaderConfig: operator.ReloaderConfig{
-			CPURequest:    "100m",
-			CPULimit:      "100m",
-			MemoryRequest: "50Mi",
-			MemoryLimit:   "0",
-			Image:         "quay.io/prometheus-operator/prometheus-config-reloader:latest",
-		},
-		PrometheusDefaultBaseImage: "quay.io/prometheus/prometheus",
-		ThanosDefaultBaseImage:     "quay.io/thanos/thanos:v0.7.0",
-	}
-	logger := newLogger()
-	p := monitoringv1.Prometheus{
-		Spec: monitoringv1.PrometheusSpec{},
-	}
-
-	cg, err := NewConfigGenerator(logger, &p, false)
-	require.NoError(t, err)
-
-	sset, err := makeStatefulSet(logger, "test", p, testConfig, cg, nil, "", 0, nil)
-	require.NoError(t, err)
-
-	expectedResources := v1.ResourceRequirements{
-		Limits: v1.ResourceList{
-			v1.ResourceCPU: resource.MustParse("100m"),
-		},
-		Requests: v1.ResourceList{
-			v1.ResourceCPU:    resource.MustParse("100m"),
-			v1.ResourceMemory: resource.MustParse("50Mi"),
-		},
-	}
-	for _, c := range sset.Spec.Template.Spec.Containers {
-		if (c.Name == "prometheus-config-reloader" || c.Name == "rules-configmap-reloader") && !reflect.DeepEqual(c.Resources, expectedResources) {
-			t.Fatalf("Expected resource requests/limits:\n\n%s\n\nGot:\n\n%s", expectedResources.String(), c.Resources.String())
-		}
-	}
 }
 
 func TestAdditionalContainers(t *testing.T) {
@@ -2064,6 +1724,31 @@ func TestWebPageTitle(t *testing.T) {
 
 	if !found {
 		t.Fatal("Prometheus web page title is not correctly set.")
+	}
+}
+
+func TestMaxConnections(t *testing.T) {
+	maxConnections := int32(600)
+	sset, err := makeStatefulSetFromPrometheus(monitoringv1.Prometheus{
+		Spec: monitoringv1.PrometheusSpec{
+			CommonPrometheusFields: monitoringv1.CommonPrometheusFields{
+				Web: &monitoringv1.PrometheusWebSpec{
+					MaxConnections: &maxConnections,
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	found := false
+	for _, flag := range sset.Spec.Template.Spec.Containers[0].Args {
+		if flag == "--web.max-connections=600" {
+			found = true
+		}
+	}
+
+	if !found {
+		t.Fatal("Prometheus web max connections is not correctly set.")
 	}
 }
 
