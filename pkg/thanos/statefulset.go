@@ -205,8 +205,9 @@ func makeStatefulSetSpec(tr *monitoringv1.ThanosRuler, config Config, ruleConfig
 	}
 
 	trCLIArgs = append(trCLIArgs, fmt.Sprintf(`--label=%s="$(POD_NAME)"`, defaultReplicaLabelName))
-	for k, v := range tr.Spec.Labels {
-		trCLIArgs = append(trCLIArgs, fmt.Sprintf(`--label=%s="%s"`, k, v))
+	labels := operator.Labels{LabelsMap: tr.Spec.Labels}
+	for _, k := range labels.SortedKeys() {
+		trCLIArgs = append(trCLIArgs, fmt.Sprintf(`--label=%s="%s"`, k, labels.LabelsMap[k]))
 	}
 
 	trCLIArgs = append(trCLIArgs, fmt.Sprintf("--alert.label-drop=%s", defaultReplicaLabelName))
