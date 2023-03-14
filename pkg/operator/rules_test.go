@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
@@ -32,6 +33,7 @@ func TestMakeRulesConfigMaps(t *testing.T) {
 	t.Run("shouldRejectRuleWithInvalidLabels", shouldRejectRuleWithInvalidLabels)
 	t.Run("shouldRejectRuleWithInvalidExpression", shouldRejectRuleWithInvalidExpression)
 	t.Run("shouldResetRuleWithPartialResponseStrategySet", shouldResetRuleWithPartialResponseStrategySet)
+	t.Run("shouldAcceptRuleWithLimit", shouldAcceptRuleWithLimit)
 }
 
 func shouldRejectRuleWithInvalidPartialResponseStrategyValue(t *testing.T) {
@@ -149,5 +151,26 @@ func shouldResetRuleWithPartialResponseStrategySet(t *testing.T) {
 	content, _ := generateRulesConfiguration(PrometheusFormat, rules, log.NewLogfmtLogger(log.NewSyncWriter(os.Stdout)))
 	if strings.Contains(content, "partial_response_strategy") {
 		t.Fatalf("expected `partial_response_strategy` removed from PrometheusRule")
+	}
+}
+
+func shouldAcceptRuleWithLimit(t *testing.T) {
+	rules := monitoringv1.PrometheusRuleSpec{Groups: []monitoringv1.RuleGroup{
+		{
+			Name: "group",
+			Rules: []monitoringv1.Rule{
+				{
+					Alert: "alert",
+					Expr:  intstr.FromString("vector(1)"),
+				},
+			},
+			Limit: 50,
+		},
+	}}
+
+	promVersion, _ := semver.ParseTolerant(DefaultPrometheusVersion)
+	err := validateRuleLimits(PrometheusFormat, promVersion, rules)
+	if err != nil {
+		t.Fatalf("expected no errors when parsing rule with limit value")
 	}
 }

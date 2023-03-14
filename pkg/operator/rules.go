@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -41,6 +42,7 @@ const (
 )
 
 type PrometheusRuleSelector struct {
+	version      semver.Version
 	ruleFormat   RuleConfigurationFormat
 	ruleSelector labels.Selector
 	nsLabeler    *namespacelabeler.Labeler
@@ -61,6 +63,26 @@ func NewPrometheusRuleSelector(ruleFormat RuleConfigurationFormat, labelSelector
 		ruleInformer: ruleInformer,
 		logger:       logger,
 	}, nil
+}
+
+func validateRuleLimits(ruleFormat RuleConfigurationFormat, version semver.Version, promRule monitoringv1.PrometheusRuleSpec) error {
+	minVersionLimitsProm := semver.MustParse("2.31.0")
+	minVersionLimitsThanos := semver.MustParse("0.24.0")
+
+	for i := range promRule.Groups {
+		if promRule.Groups[i].Limit != 0 {
+			if ruleFormat == PrometheusFormat {
+				if version.LT(minVersionLimitsProm) {
+					return errors.Errorf("`limits` is supported only from Prometheus version %q", minVersionLimitsProm)
+				}
+			} else {
+				if version.LT(minVersionLimitsThanos) {
+					return errors.Errorf("`limits` is supported only from Thanos version %q", minVersionLimitsThanos)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func generateRulesConfiguration(ruleformat RuleConfigurationFormat, promRule monitoringv1.PrometheusRuleSpec, logger log.Logger) (string, error) {
@@ -114,7 +136,7 @@ func ValidateRule(promRule monitoringv1.PrometheusRuleSpec) []error {
 
 // Select selects PrometheusRules and translates them into native Prometheus/Thanos configurations.
 // The second returned value is the number of rejected PrometheusRule objects.
-func (pr *PrometheusRuleSelector) Select(namespaces []string) (map[string]string, int, error) {
+func (pr *PrometheusRuleSelector) Select(version semver.Version, namespaces []string) (map[string]string, int, error) {
 	promRules := map[string]*monitoringv1.PrometheusRule{}
 
 	for _, ns := range namespaces {
@@ -140,6 +162,11 @@ func (pr *PrometheusRuleSelector) Select(namespaces []string) (map[string]string
 		var content string
 		if err := pr.nsLabeler.EnforceNamespaceLabel(promRule); err != nil {
 			continue
+		}
+
+		err = validateRuleLimits(pr.ruleFormat, version, promRule.Spec)
+		if err != nil {
+			level.Warn(pr.logger).Log("msg", err.Error())
 		}
 
 		content, err = generateRulesConfiguration(pr.ruleFormat, promRule.Spec, pr.logger)

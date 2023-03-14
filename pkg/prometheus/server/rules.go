@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blang/semver/v4"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -69,12 +70,17 @@ func (c *Operator) createOrUpdateRuleConfigMaps(ctx context.Context, p *monitori
 	)
 
 	logger := log.With(c.logger, "prometheus", p.Name, "namespace", p.Namespace)
+	promVersion, err := semver.ParseTolerant(operator.StringValOrDefault(p.GetCommonPrometheusFields().Version, operator.DefaultPrometheusVersion))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse Prometheus version")
+	}
+
 	promRuleSelector, err := operator.NewPrometheusRuleSelector(operator.PrometheusFormat, p.Spec.RuleSelector, nsLabeler, c.ruleInfs, logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing PrometheusRules failed")
 	}
 
-	newRules, rejected, err := promRuleSelector.Select(namespaces)
+	newRules, rejected, err := promRuleSelector.Select(promVersion, namespaces)
 	if err != nil {
 		return nil, errors.Wrap(err, "selecting PrometheusRules failed")
 	}

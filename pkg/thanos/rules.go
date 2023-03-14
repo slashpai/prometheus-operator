@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blang/semver/v4"
 	"github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespacelabeler"
@@ -69,12 +70,17 @@ func (o *Operator) createOrUpdateRuleConfigMaps(ctx context.Context, t *monitori
 	)
 
 	logger := log.With(o.logger, "thanos", t.Name, "namespace", t.Namespace)
+	thanosVersion, err := semver.ParseTolerant(operator.StringValOrDefault(t.Spec.Version, operator.DefaultThanosVersion))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse Thanos version")
+	}
+
 	promRuleSelector, err := operator.NewPrometheusRuleSelector(operator.ThanosFormat, t.Spec.RuleSelector, nsLabeler, o.ruleInfs, logger)
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing PrometheusRules failed")
 	}
 
-	newRules, rejected, err := promRuleSelector.Select(namespaces)
+	newRules, rejected, err := promRuleSelector.Select(thanosVersion, namespaces)
 	if err != nil {
 		return nil, errors.Wrap(err, "selecting PrometheusRules failed")
 	}
