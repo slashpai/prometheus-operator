@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -91,12 +90,12 @@ type Operator struct {
 }
 
 type Config struct {
-	Host                         string
 	LocalHost                    string
 	ClusterDomain                string
 	ReloaderConfig               operator.ContainerConfig
 	AlertmanagerDefaultBaseImage string
 	Namespaces                   operator.Namespaces
+	Annotations                  operator.Annotations
 	Labels                       operator.Labels
 	AlertManagerSelector         string
 	SecretListWatchSelector      string
@@ -137,12 +136,12 @@ func New(ctx context.Context, c operator.Config, logger log.Logger, r prometheus
 		metrics:         operator.NewMetrics(r),
 		reconciliations: &operator.ReconciliationTracker{},
 		config: Config{
-			Host:                         c.Host,
 			LocalHost:                    c.LocalHost,
 			ClusterDomain:                c.ClusterDomain,
 			ReloaderConfig:               c.ReloaderConfig,
 			AlertmanagerDefaultBaseImage: c.AlertmanagerDefaultBaseImage,
 			Namespaces:                   c.Namespaces,
+			Annotations:                  c.Annotations,
 			Labels:                       c.Labels,
 			AlertManagerSelector:         c.AlertManagerSelector,
 			SecretListWatchSelector:      c.SecretListWatchSelector,
@@ -558,10 +557,6 @@ func (c *Operator) Resolve(ss *appsv1.StatefulSet) metav1.Object {
 	}
 
 	return a.(*monitoringv1.Alertmanager)
-}
-
-func statefulSetNameFromAlertmanagerName(name string) string {
-	return "alertmanager-" + name
 }
 
 func statefulSetKeyToAlertmanagerKey(key string) (bool, string) {
@@ -999,8 +994,9 @@ func (c *Operator) createOrUpdateGeneratedConfigSecret(ctx context.Context, am *
 
 	generatedConfigSecret := &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   generatedConfigSecretName(am.Name),
-			Labels: c.config.Labels.Merge(managedByOperatorLabels),
+			Name:        generatedConfigSecretName(am.Name),
+			Annotations: c.config.Annotations.AnnotationsMap,
+			Labels:      c.config.Labels.Merge(managedByOperatorLabels),
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         am.APIVersion,
@@ -1130,7 +1126,7 @@ func checkAlertmanagerConfigResource(ctx context.Context, amc *monitoringv1alpha
 		return err
 	}
 
-	return checkInhibitRules(ctx, amc, amVersion)
+	return checkInhibitRules(amc, amVersion)
 }
 
 func checkRoute(ctx context.Context, route *monitoringv1alpha1.Route, amVersion semver.Version) error {
@@ -1158,7 +1154,7 @@ func checkRoute(ctx context.Context, route *monitoringv1alpha1.Route, amVersion 
 	return nil
 }
 
-func checkHTTPConfig(ctx context.Context, hc *monitoringv1alpha1.HTTPConfig, amVersion semver.Version) error {
+func checkHTTPConfig(hc *monitoringv1alpha1.HTTPConfig, amVersion semver.Version) error {
 	if hc == nil {
 		return nil
 	}
@@ -1208,7 +1204,7 @@ func checkReceivers(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerCon
 			return err
 		}
 
-		err = checkEmailConfigs(ctx, receiver.EmailConfigs, amc.GetNamespace(), amcKey, store)
+		err = checkEmailConfigs(ctx, receiver.EmailConfigs, amc.GetNamespace(), store)
 		if err != nil {
 			return err
 		}
@@ -1246,7 +1242,7 @@ func checkPagerDutyConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 
@@ -1281,10 +1277,10 @@ func checkOpsGenieConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
-		if err := checkOpsGenieResponder(ctx, config.Responders, amVersion); err != nil {
+		if err := checkOpsGenieResponder(config.Responders, amVersion); err != nil {
 			return err
 		}
 		opsgenieConfigKey := fmt.Sprintf("%s/opsgenie/%d", key, i)
@@ -1303,7 +1299,7 @@ func checkOpsGenieConfigs(
 	return nil
 }
 
-func checkOpsGenieResponder(ctx context.Context, opsgenieResponder []monitoringv1alpha1.OpsGenieConfigResponder, amVersion semver.Version) error {
+func checkOpsGenieResponder(opsgenieResponder []monitoringv1alpha1.OpsGenieConfigResponder, amVersion semver.Version) error {
 	lessThanV0_24 := amVersion.LT(semver.MustParse("0.24.0"))
 	for _, resp := range opsgenieResponder {
 		if resp.Type == "teams" && lessThanV0_24 {
@@ -1322,7 +1318,7 @@ func checkSlackConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		slackConfigKey := fmt.Sprintf("%s/slack/%d", key, i)
@@ -1350,7 +1346,7 @@ func checkWebhookConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		webhookConfigKey := fmt.Sprintf("%s/webhook/%d", key, i)
@@ -1382,7 +1378,7 @@ func checkWechatConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		wechatConfigKey := fmt.Sprintf("%s/wechat/%d", key, i)
@@ -1401,7 +1397,7 @@ func checkWechatConfigs(
 	return nil
 }
 
-func checkEmailConfigs(ctx context.Context, configs []monitoringv1alpha1.EmailConfig, namespace string, key string, store *assets.Store) error {
+func checkEmailConfigs(ctx context.Context, configs []monitoringv1alpha1.EmailConfig, namespace string, store *assets.Store) error {
 	for _, config := range configs {
 		if config.AuthPassword != nil {
 			if _, err := store.GetSecretKey(ctx, namespace, *config.AuthPassword); err != nil {
@@ -1431,7 +1427,7 @@ func checkVictorOpsConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		if config.APIKey != nil {
@@ -1472,7 +1468,7 @@ func checkPushoverConfigs(
 	}
 
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		if err := checkSecret(config.UserKey, "userKey"); err != nil {
@@ -1500,7 +1496,7 @@ func checkSnsConfigs(
 	amVersion semver.Version,
 ) error {
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 		snsConfigKey := fmt.Sprintf("%s/sns/%d", key, i)
@@ -1532,7 +1528,7 @@ func checkTelegramConfigs(
 	}
 
 	for i, config := range configs {
-		if err := checkHTTPConfig(ctx, config.HTTPConfig, amVersion); err != nil {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
 			return err
 		}
 
@@ -1552,7 +1548,7 @@ func checkTelegramConfigs(
 	return nil
 }
 
-func checkInhibitRules(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerConfig, version semver.Version) error {
+func checkInhibitRules(amc *monitoringv1alpha1.AlertmanagerConfig, version semver.Version) error {
 	matchersV2Allowed := version.GTE(semver.MustParse("0.22.0"))
 
 	for i, rule := range amc.Spec.InhibitRules {
@@ -1678,9 +1674,10 @@ func (c *Operator) createOrUpdateWebConfigSecret(ctx context.Context, a *monitor
 		Name:               a.Name,
 		UID:                a.UID,
 	}
+	secretAnnotations := c.config.Annotations.AnnotationsMap
 	secretLabels := c.config.Labels.Merge(managedByOperatorLabels)
 
-	if err := webConfig.CreateOrUpdateWebConfigSecret(ctx, secretClient, secretLabels, ownerReference); err != nil {
+	if err := webConfig.CreateOrUpdateWebConfigSecret(ctx, secretClient, secretAnnotations, secretLabels, ownerReference); err != nil {
 		return errors.Wrap(err, "failed to reconcile web config secret")
 	}
 
@@ -1710,62 +1707,6 @@ func ListOptions(name string) metav1.ListOptions {
 			"alertmanager":           name,
 		})).String(),
 	}
-}
-
-// Status evaluates the current status of an Alertmanager object with
-// respect to its specified resource object. It returns the status and a list of
-// pods that are not updated.
-// TODO(simonpasquier): remove once the status subresource is considered stable.
-func Status(ctx context.Context, kclient kubernetes.Interface, a *monitoringv1.Alertmanager) (*monitoringv1.AlertmanagerStatus, []v1.Pod, error) {
-	res := &monitoringv1.AlertmanagerStatus{Paused: a.Spec.Paused}
-
-	pods, err := kclient.CoreV1().Pods(a.Namespace).List(ctx, ListOptions(a.Name))
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "retrieving pods of failed")
-	}
-	sset, err := kclient.AppsV1().StatefulSets(a.Namespace).Get(ctx, statefulSetNameFromAlertmanagerName(a.Name), metav1.GetOptions{})
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "retrieving stateful set failed")
-	}
-
-	res.Replicas = int32(len(pods.Items))
-
-	var oldPods []v1.Pod
-	for _, pod := range pods.Items {
-		ready, err := k8sutil.PodRunningAndReady(pod)
-		if err != nil {
-			return nil, nil, errors.Wrap(err, "cannot determine pod ready state")
-		}
-		if ready {
-			res.AvailableReplicas++
-			// TODO(fabxc): detect other fields of the pod template
-			// that are mutable.
-			if needsUpdate(&pod, sset.Spec.Template) {
-				oldPods = append(oldPods, pod)
-			} else {
-				res.UpdatedReplicas++
-			}
-			continue
-		}
-		res.UnavailableReplicas++
-	}
-
-	return res, oldPods, nil
-}
-
-func needsUpdate(pod *v1.Pod, tmpl v1.PodTemplateSpec) bool {
-	c1 := pod.Spec.Containers[0]
-	c2 := tmpl.Spec.Containers[0]
-
-	if c1.Image != c2.Image {
-		return true
-	}
-
-	if !reflect.DeepEqual(c1.Args, c2.Args) {
-		return true
-	}
-
-	return false
 }
 
 func tlsAssetsSecretName(name string) string {

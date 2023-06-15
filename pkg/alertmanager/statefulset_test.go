@@ -382,6 +382,21 @@ func TestListenTLS(t *testing.T) {
 	if !reloadURLFound {
 		t.Fatalf("expected to find arg %s in config reloader", expectedConfigReloaderReloadURL)
 	}
+
+	expectedArgsConfigReloader := []string{
+		"--listen-address=:8080",
+		"--reload-url=https://localhost:9093/-/reload",
+		"--config-file=/etc/alertmanager/config/alertmanager.yaml.gz",
+		"--config-envsubst-file=/etc/alertmanager/config_out/alertmanager.env.yaml",
+	}
+
+	for _, c := range sset.Spec.Template.Spec.Containers {
+		if c.Name == "config-reloader" {
+			if !reflect.DeepEqual(c.Args, expectedArgsConfigReloader) {
+				t.Fatalf("expected container args are %s, but found %s", expectedArgsConfigReloader, c.Args)
+			}
+		}
+	}
 }
 
 // below Alertmanager v0.13.0 all flags are with single dash.
@@ -1152,6 +1167,22 @@ func TestConfigReloader(t *testing.T) {
 
 }
 
+func TestAutomountServiceAccountToken(t *testing.T) {
+	for i := range []int{0, 1} {
+		automountServiceAccountToken := (i == 0)
+		sset, err := makeStatefulSet(&monitoringv1.Alertmanager{
+			Spec: monitoringv1.AlertmanagerSpec{
+				AutomountServiceAccountToken: &automountServiceAccountToken,
+			},
+		}, defaultTestConfig, "", nil)
+		if err != nil {
+			t.Fatalf("Unexpected error while making StatefulSet: %v", err)
+		}
+		if *sset.Spec.Template.Spec.AutomountServiceAccountToken != automountServiceAccountToken {
+			t.Fatal("AutomountServiceAccountToken not found")
+		}
+	}
+}
 func containsString(sub string) func(string) bool {
 	return func(x string) bool {
 		return strings.Contains(x, sub)

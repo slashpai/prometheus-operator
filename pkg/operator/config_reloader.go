@@ -25,7 +25,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-const configReloaderPort = 8080
+const (
+	configReloaderPort = 8080
+
+	// ShardEnvVar is the name of the environment variable injected into the
+	// config-reloader container that contains the shard number.
+	ShardEnvVar = "SHARD"
+
+	// PodNameEnvVar is the name of the environment variable injected in the
+	// config-reloader container that contains the pod name.
+	PodNameEnvVar = "POD_NAME"
+)
 
 // ConfigReloader contains the options to configure
 // a config-reloader container
@@ -76,7 +86,7 @@ func ConfigEnvsubstFile(configEnvsubstFile string) ReloaderOption {
 	}
 }
 
-// ReloaderResources sets the config option for the config-reloader container
+// ReloaderConfig sets the config option for the config-reloader container
 func ReloaderConfig(rc ContainerConfig) ReloaderOption {
 	return func(c *ConfigReloader) {
 		c.config = rc
@@ -152,7 +162,7 @@ func CreateConfigReloader(name string, options ...ReloaderOption) v1.Container {
 		args    = make([]string, 0)
 		envVars = []v1.EnvVar{
 			{
-				Name: "POD_NAME",
+				Name: PodNameEnvVar,
 				ValueFrom: &v1.EnvVarSource{
 					FieldRef: &v1.ObjectFieldSelector{FieldPath: "metadata.name"},
 				},
@@ -225,7 +235,7 @@ func CreateConfigReloader(name string, options ...ReloaderOption) v1.Container {
 
 	if configReloader.shard != nil {
 		envVars = append(envVars, v1.EnvVar{
-			Name:  "SHARD",
+			Name:  ShardEnvVar,
 			Value: strconv.Itoa(int(*configReloader.shard)),
 		})
 	}
