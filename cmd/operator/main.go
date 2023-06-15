@@ -60,7 +60,7 @@ const (
 )
 
 const (
-	defaultReloaderCPU    = "100m"
+	defaultReloaderCPU    = "10m"
 	defaultReloaderMemory = "50Mi"
 )
 
@@ -148,6 +148,7 @@ func init() {
 	flagset.StringVar(&cfg.TLSConfig.KeyFile, "key-file", "", "- NOT RECOMMENDED FOR PRODUCTION - Path to private TLS certificate file.")
 	flagset.StringVar(&cfg.TLSConfig.CAFile, "ca-file", "", "- NOT RECOMMENDED FOR PRODUCTION - Path to TLS CA file.")
 	flagset.StringVar(&cfg.KubeletObject, "kubelet-service", "", "Service/Endpoints object to write kubelets into in format \"namespace/name\"")
+	flagset.StringVar(&cfg.KubeletSelector, "kubelet-selector", "", "Label selector to filter nodes.")
 	flagset.BoolVar(&cfg.TLSInsecure, "tls-insecure", false, "- NOT RECOMMENDED FOR PRODUCTION - Don't verify API server's CA certificate.")
 	// The Prometheus config reloader image is released along with the
 	// Prometheus Operator image, tagged with the same semver version. Default to
@@ -168,6 +169,7 @@ func init() {
 	flagset.Var(alertmanagerNs, "alertmanager-instance-namespaces", "Namespaces where Alertmanager custom resources and corresponding StatefulSets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for Alertmanager custom resources.")
 	flagset.Var(alertmanagerConfigNs, "alertmanager-config-namespaces", "Namespaces where AlertmanagerConfig custom resources and corresponding Secrets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for AlertmanagerConfig custom resources.")
 	flagset.Var(thanosRulerNs, "thanos-ruler-instance-namespaces", "Namespaces where ThanosRuler custom resources and corresponding StatefulSets are watched/created. If set this takes precedence over --namespaces or --deny-namespaces for ThanosRuler custom resources.")
+	flagset.Var(&cfg.Annotations, "annotations", "Annotations to be add to all resources created by the operator")
 	flagset.Var(&cfg.Labels, "labels", "Labels to be add to all resources created by the operator")
 	flagset.StringVar(&cfg.LocalHost, "localhost", "localhost", "EXPERIMENTAL (could be removed in future releases) - Host used to communicate between local services on a pod. Fixes issues where localhost resolves incorrectly.")
 	flagset.StringVar(&cfg.ClusterDomain, "cluster-domain", "", "The domain of the cluster. This is used to generate service FQDNs. If this is not specified, DNS search domain expansion is used instead.")
@@ -262,7 +264,7 @@ func Main() int {
 
 	po, err := prometheuscontroller.New(ctx, cfg, log.With(logger, "component", "prometheusoperator"), r)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "instantiating prometheus controller failed: ", err)
+		fmt.Fprintln(os.Stderr, "instantiating prometheus controller failed: ", err)
 		cancel()
 		return 1
 	}
@@ -304,14 +306,14 @@ func Main() int {
 
 	ao, err := alertmanagercontroller.New(ctx, cfg, log.With(logger, "component", "alertmanageroperator"), r)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "instantiating alertmanager controller failed: ", err)
+		fmt.Fprintln(os.Stderr, "instantiating alertmanager controller failed: ", err)
 		cancel()
 		return 1
 	}
 
 	to, err := thanoscontroller.New(ctx, cfg, log.With(logger, "component", "thanosoperator"), r)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "instantiating thanos controller failed: ", err)
+		fmt.Fprintln(os.Stderr, "instantiating thanos controller failed: ", err)
 		cancel()
 		return 1
 	}
@@ -322,7 +324,7 @@ func Main() int {
 	admit.Register(mux)
 	l, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "listening failed", cfg.ListenAddress, err)
+		fmt.Fprintln(os.Stderr, "listening failed", cfg.ListenAddress, err)
 		cancel()
 		return 1
 	}
@@ -335,7 +337,7 @@ func Main() int {
 		tlsConfig, err = server.NewTLSConfig(logger, cfg.ServerTLSConfig.CertFile, cfg.ServerTLSConfig.KeyFile,
 			cfg.ServerTLSConfig.ClientCAFile, cfg.ServerTLSConfig.MinVersion, cfg.ServerTLSConfig.CipherSuites)
 		if tlsConfig == nil || err != nil {
-			fmt.Fprint(os.Stderr, "invalid TLS config", err)
+			fmt.Fprintln(os.Stderr, "invalid TLS config", err)
 			cancel()
 			return 1
 		}
@@ -402,7 +404,7 @@ func Main() int {
 			cfg.ServerTLSConfig.ReloadInterval,
 		)
 		if err != nil {
-			fmt.Fprint(os.Stderr, "failed to initialize certificate reloader", err)
+			fmt.Fprintln(os.Stderr, "failed to initialize certificate reloader", err)
 			cancel()
 			return 1
 		}

@@ -32,12 +32,11 @@ import (
 )
 
 const (
-	defaultReplicaExternalLabelName = "prometheus_replica"
-	StorageDir                      = "/prometheus"
-	ConfDir                         = "/etc/prometheus/config"
-	ConfOutDir                      = "/etc/prometheus/config_out"
-	WebConfigDir                    = "/etc/prometheus/web_config"
-	tlsAssetsDir                    = "/etc/prometheus/certs"
+	StorageDir   = "/prometheus"
+	ConfDir      = "/etc/prometheus/config"
+	ConfOutDir   = "/etc/prometheus/config_out"
+	WebConfigDir = "/etc/prometheus/web_config"
+	tlsAssetsDir = "/etc/prometheus/certs"
 	//TODO: RulesDir should be moved to the server package, since it is not used by the agent.
 	// It is here at the moment because promcfg uses it, and moving as is will cause import cycle error.
 	RulesDir                 = "/etc/prometheus/rules"
@@ -108,8 +107,9 @@ func MakeConfigSecret(p monitoringv1.PrometheusInterface, config operator.Config
 	boolTrue := true
 	return &v1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   ConfigSecretName(p),
-			Labels: config.Labels.Merge(ManagedByOperatorLabels),
+			Name:        ConfigSecretName(p),
+			Annotations: config.Annotations.AnnotationsMap,
+			Labels:      config.Labels.Merge(ManagedByOperatorLabels),
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         typeMeta.APIVersion,
@@ -224,14 +224,6 @@ func BuildCommonPrometheusArgs(cpf monitoringv1.CommonPrometheusFields, cg *Conf
 		promArgs = cg.WithMinimumVersion("2.6.0").AppendCommandlineArgument(promArgs, monitoringv1.Argument{Name: "log.format", Value: cpf.LogFormat})
 	}
 
-	if cpf.WALCompression != nil {
-		arg := monitoringv1.Argument{Name: "no-storage.tsdb.wal-compression"}
-		if *cpf.WALCompression {
-			arg.Name = "storage.tsdb.wal-compression"
-		}
-		promArgs = cg.WithMinimumVersion("2.11.0").AppendCommandlineArgument(promArgs, arg)
-	}
-
 	if cpf.ListenLocal {
 		promArgs = append(promArgs, monitoringv1.Argument{Name: "web.listen-address", Value: "127.0.0.1:9090"})
 	}
@@ -281,12 +273,7 @@ func BuildCommonVolumes(p monitoringv1.PrometheusInterface, tlsAssetSecrets []st
 		},
 	}
 
-	volName := VolumeName(p)
-	if cpf.Storage != nil {
-		if cpf.Storage.VolumeClaimTemplate.Name != "" {
-			volName = cpf.Storage.VolumeClaimTemplate.Name
-		}
-	}
+	volName := VolumeClaimName(p, cpf)
 
 	promVolumeMounts := []v1.VolumeMount{
 		{
@@ -356,6 +343,16 @@ func BuildCommonVolumes(p monitoringv1.PrometheusInterface, tlsAssetSecrets []st
 	}
 
 	return volumes, promVolumeMounts, nil
+}
+
+func VolumeClaimName(p monitoringv1.PrometheusInterface, cpf monitoringv1.CommonPrometheusFields) string {
+	volName := VolumeName(p)
+	if cpf.Storage != nil {
+		if cpf.Storage.VolumeClaimTemplate.Name != "" {
+			volName = cpf.Storage.VolumeClaimTemplate.Name
+		}
+	}
+	return volName
 }
 
 func ProbeHandler(probePath string, cpf monitoringv1.CommonPrometheusFields, webConfigGenerator *ConfigGenerator, webRoutePrefix string) v1.ProbeHandler {
