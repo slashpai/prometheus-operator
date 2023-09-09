@@ -257,7 +257,7 @@ func (c *Operator) bootstrap(ctx context.Context) error {
 		}
 		nsInf := cache.NewSharedIndexInformer(
 			o.metrics.NewInstrumentedListerWatcher(
-				listwatch.NewUnprivilegedNamespaceListWatchFromClient(ctx, o.logger, o.kclient.CoreV1().RESTClient(), allowList, o.config.Namespaces.DenyList, fields.Everything()),
+				listwatch.NewUnprivilegedNamespaceListWatchFromClient(ctx, o.logger, o.kclient.CoreV1().RESTClient(), allowList, o.config.Namespaces.DenyList),
 			),
 			&v1.Namespace{}, nsResyncPeriod, cache.Indexers{},
 		)
@@ -697,7 +697,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 
 	sset, err := makeStatefulSet(am, c.config, newSSetInputHash, tlsAssets.ShardNames())
 	if err != nil {
-		return errors.Wrap(err, "failed to make statefulset")
+		return fmt.Errorf("failed to generate statefulset: %w", err)
 	}
 	operator.SanitizeSTS(sset)
 
@@ -760,7 +760,7 @@ func (c *Operator) getAlertmanagerFromKey(key string) (*monitoringv1.Alertmanage
 
 // getStatefulSetFromAlertmanagerKey returns a copy of the StatefulSet object
 // corresponding to the Alertmanager object identified by key.
-// If the object is not found, it returns a nil pointer.
+// If the object is not found, it returns a nil pointer without error.
 func (c *Operator) getStatefulSetFromAlertmanagerKey(key string) (*appsv1.StatefulSet, error) {
 	ssetName := alertmanagerKeyToStatefulSetKey(key)
 
@@ -794,7 +794,7 @@ func (c *Operator) UpdateStatus(ctx context.Context, key string) error {
 		return errors.Wrap(err, "failed to get StatefulSet")
 	}
 
-	if sset == nil || c.rr.DeletionInProgress(sset) {
+	if sset != nil && c.rr.DeletionInProgress(sset) {
 		return nil
 	}
 
@@ -820,6 +820,11 @@ func createSSetInputHash(a monitoringv1.Alertmanager, c Config, tlsAssets *opera
 	if a.Spec.Web != nil && a.Spec.Web.WebConfigFileFields.HTTPConfig != nil {
 		http2 = a.Spec.Web.WebConfigFileFields.HTTPConfig.HTTP2
 	}
+
+	// The controller should ignore any changes to RevisionHistoryLimit field because
+	// it may be modified by external actors.
+	// See https://github.com/prometheus-operator/prometheus-operator/issues/5712
+	s.RevisionHistoryLimit = nil
 
 	hash, err := hashstructure.Hash(struct {
 		AlertmanagerLabels      map[string]string
@@ -1210,6 +1215,11 @@ func checkReceivers(ctx context.Context, amc *monitoringv1alpha1.AlertmanagerCon
 			return err
 		}
 
+		err = checkWebexConfigs(ctx, receiver.WebexConfigs, amc.GetNamespace(), amcKey, store, amVersion)
+		if err != nil {
+			return err
+		}
+
 		err = checkEmailConfigs(ctx, receiver.EmailConfigs, amc.GetNamespace(), store)
 		if err != nil {
 			return err
@@ -1436,6 +1446,36 @@ func checkWechatConfigs(
 	return nil
 }
 
+func checkWebexConfigs(
+	ctx context.Context,
+	configs []monitoringv1alpha1.WebexConfig,
+	namespace string,
+	key string,
+	store *assets.Store,
+	amVersion semver.Version,
+) error {
+	if len(configs) == 0 {
+		return nil
+	}
+
+	if amVersion.LT(semver.MustParse("0.25.0")) {
+		return fmt.Errorf(`webexConfigs' is available in Alertmanager >= 0.25.0 only - current %s`, amVersion)
+	}
+
+	for i, config := range configs {
+		if err := checkHTTPConfig(config.HTTPConfig, amVersion); err != nil {
+			return err
+		}
+		webexConfigKey := fmt.Sprintf("%s/webex/%d", key, i)
+
+		if err := configureHTTPConfigInStore(ctx, config.HTTPConfig, namespace, webexConfigKey, store); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func checkEmailConfigs(ctx context.Context, configs []monitoringv1alpha1.EmailConfig, namespace string, store *assets.Store) error {
 	for _, config := range configs {
 		if config.AuthPassword != nil {
@@ -1625,7 +1665,7 @@ func configureHTTPConfigInStore(ctx context.Context, httpConfig *monitoringv1alp
 
 	var err error
 	if httpConfig.BearerTokenSecret != nil {
-		if err = store.AddBearerToken(ctx, namespace, *httpConfig.BearerTokenSecret, key); err != nil {
+		if err = store.AddBearerToken(ctx, namespace, httpConfig.BearerTokenSecret, key); err != nil {
 			return err
 		}
 	}
