@@ -639,6 +639,18 @@ func (cb *configBuilder) convertReceiver(ctx context.Context, in *monitoringv1al
 		}
 	}
 
+	var webexConfigs []*webexConfig
+	if l := len(in.WebexConfigs); l > 0 {
+		webexConfigs = make([]*webexConfig, l)
+		for i := range in.WebexConfigs {
+			receiver, err := cb.convertWebexConfig(ctx, in.WebexConfigs[i], crKey)
+			if err != nil {
+				return nil, errors.Wrapf(err, "WebexConfig[%d]", i)
+			}
+			webexConfigs[i] = receiver
+		}
+	}
+
 	return &receiver{
 		Name:             makeNamespacedString(in.Name, crKey),
 		OpsgenieConfigs:  opsgenieConfigs,
@@ -652,6 +664,7 @@ func (cb *configBuilder) convertReceiver(ctx context.Context, in *monitoringv1al
 		PushoverConfigs:  pushoverConfigs,
 		SNSConfigs:       snsConfigs,
 		TelegramConfigs:  telegramConfigs,
+		WebexConfigs:     webexConfigs,
 	}, nil
 }
 
@@ -954,6 +967,31 @@ func (cb *configBuilder) convertWeChatConfig(ctx context.Context, in monitoringv
 			return nil, errors.Wrap(err, "failed to get API secret")
 		}
 		out.APISecret = apiSecret
+	}
+
+	if in.HTTPConfig != nil {
+		httpConfig, err := cb.convertHTTPConfig(ctx, *in.HTTPConfig, crKey)
+		if err != nil {
+			return nil, err
+		}
+		out.HTTPConfig = httpConfig
+	}
+
+	return out, nil
+}
+
+func (cb *configBuilder) convertWebexConfig(ctx context.Context, in monitoringv1alpha1.WebexConfig, crKey types.NamespacedName) (*webexConfig, error) {
+	out := &webexConfig{
+		VSendResolved: in.SendResolved,
+		RoomID:        in.RoomID,
+	}
+
+	if in.APIURL != nil {
+		out.APIURL = string(*in.APIURL)
+	}
+
+	if in.Message != nil {
+		out.Message = *in.Message
 	}
 
 	if in.HTTPConfig != nil {
@@ -1941,7 +1979,9 @@ func (sc *snsConfig) sanitize(amVersion semver.Version, logger log.Logger) error
 }
 
 func (tc *telegramConfig) sanitize(amVersion semver.Version, logger log.Logger) error {
+	lessThanV0_26 := amVersion.LT(semver.MustParse("0.26.0"))
 	telegramAllowed := amVersion.GTE(semver.MustParse("0.24.0"))
+
 	if !telegramAllowed {
 		return fmt.Errorf(`invalid syntax in receivers config; telegram integration is available in Alertmanager >= 0.24.0`)
 	}
@@ -1950,8 +1990,20 @@ func (tc *telegramConfig) sanitize(amVersion semver.Version, logger log.Logger) 
 		return errors.Errorf("mandatory field %q is empty", "chatID")
 	}
 
-	if tc.BotToken == "" {
-		return fmt.Errorf("mandatory field %q is empty", "botToken")
+	if tc.BotTokenFile != "" && lessThanV0_26 {
+		msg := "'bot_token_file' supported in Alertmanager >= 0.26.0 only - dropping field from provided config"
+		level.Warn(logger).Log("msg", msg, "current_version", amVersion.String())
+		tc.BotTokenFile = ""
+	}
+
+	if tc.BotToken == "" && tc.BotTokenFile == "" {
+		return fmt.Errorf("missing mandatory field botToken or botTokenFile")
+	}
+
+	if tc.BotToken != "" && tc.BotTokenFile != "" {
+		msg := "'bot_token' and 'bot_token_file' are mutually exclusive for telegram receiver config - 'bot_token' has taken precedence"
+		level.Warn(logger).Log("msg", msg)
+		tc.BotTokenFile = ""
 	}
 
 	return tc.HTTPConfig.sanitize(amVersion, logger)

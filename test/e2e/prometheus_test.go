@@ -44,7 +44,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	certutil "k8s.io/client-go/util/cert"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 
 	"github.com/prometheus-operator/prometheus-operator/pkg/alertmanager"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
@@ -2688,7 +2688,7 @@ func testPromGetAuthSecret(t *testing.T) {
 			},
 			serviceMonitor: func() *monitoringv1.ServiceMonitor {
 				sm := framework.MakeBasicServiceMonitor(name)
-				sm.Spec.Endpoints[0].BearerTokenSecret = v1.SecretKeySelector{
+				sm.Spec.Endpoints[0].BearerTokenSecret = &v1.SecretKeySelector{
 					LocalObjectReference: v1.LocalObjectReference{
 						Name: name,
 					},
@@ -2980,7 +2980,7 @@ func testPromArbitraryFSAcc(t *testing.T) {
 			},
 			endpoint: monitoringv1.Endpoint{
 				Port: "web",
-				BearerTokenSecret: v1.SecretKeySelector{
+				BearerTokenSecret: &v1.SecretKeySelector{
 					LocalObjectReference: v1.LocalObjectReference{
 						Name: name,
 					},
@@ -4567,7 +4567,7 @@ func testPrometheusCRDValidation(t *testing.T) {
 					},
 				},
 				Query: &monitoringv1.QuerySpec{
-					MaxConcurrency: pointer.Int32(100),
+					MaxConcurrency: ptr.To(int32(100)),
 				},
 			},
 		},
@@ -4585,7 +4585,7 @@ func testPrometheusCRDValidation(t *testing.T) {
 					},
 				},
 				Query: &monitoringv1.QuerySpec{
-					MaxConcurrency: pointer.Int32(0),
+					MaxConcurrency: ptr.To(int32(0)),
 				},
 			},
 			expectedError: true,
@@ -4933,6 +4933,68 @@ func testPromStrategicMergePatch(t *testing.T) {
 	if _, err := framework.CreatePrometheusAndWaitUntilReady(context.Background(), ns, p); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testPrometheusWithStatefulsetCreationFailure(t *testing.T) {
+	ctx := context.Background()
+	testCtx := framework.NewTestCtx(t)
+	defer testCtx.Cleanup(t)
+
+	ns := framework.CreateNamespace(context.Background(), t, testCtx)
+	framework.SetupPrometheusRBAC(context.Background(), t, testCtx, ns)
+
+	p := framework.MakeBasicPrometheus(ns, "test", "", 1)
+	// Invalid spec which prevents the creation of the statefulset
+	p.Spec.Web = &monitoringv1.PrometheusWebSpec{
+		WebConfigFileFields: monitoringv1.WebConfigFileFields{
+			TLSConfig: &monitoringv1.WebTLSConfig{
+				Cert: monitoringv1.SecretOrConfigMap{
+					ConfigMap: &v1.ConfigMapKeySelector{},
+					Secret: &v1.SecretKeySelector{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "tls-cert",
+						},
+						Key: "tls.crt",
+					},
+				},
+				KeySecret: v1.SecretKeySelector{
+					LocalObjectReference: v1.LocalObjectReference{
+						Name: "tls-cert",
+					},
+					Key: "tls.key",
+				},
+			},
+		},
+	}
+	_, err := framework.MonClientV1.Prometheuses(p.Namespace).Create(ctx, p, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	var loopError error
+	err = wait.PollUntilContextTimeout(ctx, time.Second, framework.DefaultTimeout, true, func(ctx context.Context) (bool, error) {
+		current, err := framework.MonClientV1.Prometheuses(ns).Get(ctx, "test", metav1.GetOptions{})
+		if err != nil {
+			loopError = fmt.Errorf("failed to get object: %w", err)
+			return false, nil
+		}
+
+		if err := framework.AssertCondition(current.Status.Conditions, monitoringv1.Reconciled, monitoringv1.ConditionFalse); err != nil {
+			loopError = err
+			return false, nil
+		}
+
+		if err := framework.AssertCondition(current.Status.Conditions, monitoringv1.Available, monitoringv1.ConditionFalse); err != nil {
+			loopError = err
+			return false, nil
+		}
+
+		return true, nil
+	})
+
+	if err != nil {
+		t.Fatalf("%v: %v", err, loopError)
+	}
+
+	require.NoError(t, framework.DeletePrometheusAndWaitUntilGone(context.Background(), ns, "test"))
 }
 
 func isAlertmanagerDiscoveryWorking(ns, promSVCName, alertmanagerName string) func(ctx context.Context) (bool, error) {
