@@ -59,7 +59,8 @@ func TestStatefulSetLabelingAndAnnotations(t *testing.T) {
 	}
 
 	expectedStatefulSetLabels := map[string]string{
-		"testlabel": "testlabelvalue",
+		"testlabel":  "testlabelvalue",
+		"managed-by": "prometheus-operator",
 	}
 
 	expectedPodLabels := map[string]string{
@@ -387,6 +388,7 @@ func TestListenTLS(t *testing.T) {
 
 	expectedArgsConfigReloader := []string{
 		"--listen-address=:8080",
+		"--web-config-file=/etc/alertmanager/web_config/web-config.yaml",
 		"--reload-url=https://localhost:9093/-/reload",
 		"--config-file=/etc/alertmanager/config/alertmanager.yaml.gz",
 		"--config-envsubst-file=/etc/alertmanager/config_out/alertmanager.env.yaml",
@@ -1193,10 +1195,16 @@ func TestClusterLabel(t *testing.T) {
 		scenario                string
 		version                 string
 		expectedClusterLabelArg bool
+		customClusterLabel      string
 	}{{
 		scenario:                "--cluster.label set by default for version >= v0.26.0",
 		version:                 "0.26.0",
 		expectedClusterLabelArg: true,
+	}, {
+		scenario:                "--cluster.label set if specified explicitly",
+		version:                 "0.26.0",
+		expectedClusterLabelArg: true,
+		customClusterLabel:      "custom.cluster",
 	}, {
 		scenario:                "no --cluster.label set for older versions",
 		version:                 "0.25.0",
@@ -1216,11 +1224,19 @@ func TestClusterLabel(t *testing.T) {
 				},
 			}
 
+			if ts.customClusterLabel != "" {
+				a.Spec.ClusterLabel = &ts.customClusterLabel
+			}
+
 			ss, err := makeStatefulSetSpec(nil, &a, defaultTestConfig, nil)
 			require.NoError(t, err)
 
 			args := ss.Template.Spec.Containers[0].Args
 			if ts.expectedClusterLabelArg {
+				if ts.customClusterLabel != "" {
+					require.Contains(t, args, fmt.Sprintf("--cluster.label=%s", ts.customClusterLabel))
+					return
+				}
 				require.Contains(t, args, "--cluster.label=monitoring/alertmanager")
 				return
 			}

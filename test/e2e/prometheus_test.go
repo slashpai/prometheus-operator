@@ -828,7 +828,7 @@ func testPromCreateDeleteCluster(t *testing.T) {
 	}
 }
 
-func testPromScaleUpDownCluster(t *testing.T) {
+func testPromScaleUpDownReplicas(t *testing.T) {
 	t.Parallel()
 	testCtx := framework.NewTestCtx(t)
 	defer testCtx.Cleanup(t)
@@ -842,12 +842,12 @@ func testPromScaleUpDownCluster(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err = framework.ScalePrometheusAndWaitUntilReady(context.Background(), p.Name, ns, *p.Spec.Replicas+1)
+	p, err = framework.UpdatePrometheusReplicasAndWaitUntilReady(context.Background(), p.Name, ns, *p.Spec.Replicas+1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = framework.ScalePrometheusAndWaitUntilReady(context.Background(), p.Name, ns, *p.Spec.Replicas-1)
+	_, err = framework.UpdatePrometheusReplicasAndWaitUntilReady(context.Background(), p.Name, ns, *p.Spec.Replicas-1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1000,7 +1000,7 @@ func testPromStorageLabelsAnnotations(t *testing.T) {
 			},
 			Spec: v1.PersistentVolumeClaimSpec{
 				AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
-				Resources: v1.ResourceRequirements{
+				Resources: v1.VolumeResourceRequirements{
 					Requests: v1.ResourceList{
 						v1.ResourceStorage: resource.MustParse("200Mi"),
 					},
@@ -1075,7 +1075,7 @@ func testPromStorageUpdate(t *testing.T) {
 					VolumeClaimTemplate: monitoringv1.EmbeddedPersistentVolumeClaim{
 						Spec: v1.PersistentVolumeClaimSpec{
 							AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
-							Resources: v1.ResourceRequirements{
+							Resources: v1.VolumeResourceRequirements{
 								Requests: v1.ResourceList{
 									v1.ResourceStorage: resource.MustParse("200Mi"),
 								},
@@ -1125,7 +1125,7 @@ func testPromStorageUpdate(t *testing.T) {
 					VolumeClaimTemplate: monitoringv1.EmbeddedPersistentVolumeClaim{
 						Spec: v1.PersistentVolumeClaimSpec{
 							StorageClassName: ptr.To("unknown-storage-class"),
-							Resources: v1.ResourceRequirements{
+							Resources: v1.VolumeResourceRequirements{
 								Requests: v1.ResourceList{
 									v1.ResourceStorage: resource.MustParse("200Mi"),
 								},
@@ -1749,7 +1749,7 @@ func generateHugePrometheusRule(ns, identifier string) *monitoringv1.PrometheusR
 }
 
 // Make sure the Prometheus operator only updates the Prometheus config secret
-// and the Prometheus rules configmap on relevant changes
+// and the Prometheus rules configmap on relevant changes.
 func testPromOnlyUpdatedOnRelevantChanges(t *testing.T) {
 	t.Parallel()
 	testCtx := framework.NewTestCtx(t)
@@ -2035,7 +2035,7 @@ func testPromPreserveUserAddedMetadata(t *testing.T) {
 	}
 
 	// Ensure resource reconciles
-	_, err = framework.ScalePrometheusAndWaitUntilReady(context.Background(), prometheusCRD.Name, ns, *prometheusCRD.Spec.Replicas+1)
+	_, err = framework.UpdatePrometheusReplicasAndWaitUntilReady(context.Background(), prometheusCRD.Name, ns, *prometheusCRD.Spec.Replicas+1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3250,7 +3250,7 @@ func testPromArbitraryFSAcc(t *testing.T) {
 }
 
 // mountTLSFiles is a helper to manually mount TLS certificate files
-// into the prometheus container
+// into the prometheus container.
 func mountTLSFiles(p *monitoringv1.Prometheus, secretName string) {
 	volumeName := secretName
 	p.Spec.Volumes = append(p.Spec.Volumes,
@@ -3905,7 +3905,7 @@ func testPromWebWithThanosSidecar(t *testing.T) {
 			}
 		}
 
-		reloadSuccessTimestamp, err := framework.GetMetricVal(context.Background(), ns, podName, "8080", "reloader_last_reload_success_timestamp_seconds")
+		reloadSuccessTimestamp, err := framework.GetMetricVal(context.Background(), "https", ns, podName, "8080", "reloader_last_reload_success_timestamp_seconds")
 		if err != nil {
 			pollErr = err
 			return false, nil
@@ -3916,7 +3916,7 @@ func testPromWebWithThanosSidecar(t *testing.T) {
 			return false, nil
 		}
 
-		thanosSidecarPrometheusUp, err := framework.GetMetricVal(context.Background(), ns, podName, "10902", "thanos_sidecar_prometheus_up")
+		thanosSidecarPrometheusUp, err := framework.GetMetricVal(context.Background(), "http", ns, podName, "10902", "thanos_sidecar_prometheus_up")
 		if err != nil {
 			pollErr = err
 			return false, nil
@@ -5054,6 +5054,38 @@ func testPrometheusWithStatefulsetCreationFailure(t *testing.T) {
 	}
 
 	require.NoError(t, framework.DeletePrometheusAndWaitUntilGone(context.Background(), ns, "test"))
+}
+
+func testPrometheusStatusScale(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	testCtx := framework.NewTestCtx(t)
+	defer testCtx.Cleanup(t)
+
+	ns := framework.CreateNamespace(ctx, t, testCtx)
+	framework.SetupPrometheusRBAC(ctx, t, testCtx, ns)
+	name := "test"
+
+	p := framework.MakeBasicPrometheus(ns, name, name, 1)
+	p.Spec.CommonPrometheusFields.Shards = proto.Int32(1)
+
+	p, err := framework.CreatePrometheusAndWaitUntilReady(ctx, ns, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p.Status.Shards != 1 {
+		t.Fatalf("expected scale of 1 shard, got %d", p.Status.Shards)
+	}
+
+	p, err = framework.ScalePrometheusAndWaitUntilReady(ctx, name, ns, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if p.Status.Shards != 2 {
+		t.Fatalf("expected scale of 2 shards, got %d", p.Status.Shards)
+	}
 }
 
 func isAlertmanagerDiscoveryWorking(ns, promSVCName, alertmanagerName string) func(ctx context.Context) (bool, error) {
