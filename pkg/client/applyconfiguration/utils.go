@@ -69,6 +69,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1.CommonPrometheusFieldsApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("Condition"):
 		return &monitoringv1.ConditionApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("CoreV1TopologySpreadConstraint"):
+		return &monitoringv1.CoreV1TopologySpreadConstraintApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("EmbeddedObjectMetadata"):
 		return &monitoringv1.EmbeddedObjectMetadataApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("EmbeddedPersistentVolumeClaim"):
@@ -177,6 +179,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1.ThanosSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("TLSConfig"):
 		return &monitoringv1.TLSConfigApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("TopologySpreadConstraint"):
+		return &monitoringv1.TopologySpreadConstraintApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("TSDBSpec"):
 		return &monitoringv1.TSDBSpecApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("WebConfigFileFields"):
@@ -193,6 +197,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.AlertmanagerConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AlertmanagerConfigSpec"):
 		return &monitoringv1alpha1.AlertmanagerConfigSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AttachMetadata"):
+		return &monitoringv1alpha1.AttachMetadataApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AzureSDConfig"):
 		return &monitoringv1alpha1.AzureSDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ConsulSDConfig"):
@@ -231,6 +237,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.MSTeamsConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MuteTimeInterval"):
 		return &monitoringv1alpha1.MuteTimeIntervalApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceDiscovery"):
+		return &monitoringv1alpha1.NamespaceDiscoveryApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("OpenStackSDConfig"):
+		return &monitoringv1alpha1.OpenStackSDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OpsGenieConfig"):
 		return &monitoringv1alpha1.OpsGenieConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OpsGenieConfigResponder"):
@@ -245,6 +255,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.PrometheusAgentApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PrometheusAgentSpec"):
 		return &monitoringv1alpha1.PrometheusAgentSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ProxyConfig"):
+		return &monitoringv1alpha1.ProxyConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("PushoverConfig"):
 		return &monitoringv1alpha1.PushoverConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Receiver"):

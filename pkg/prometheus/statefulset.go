@@ -17,6 +17,7 @@ package prometheus
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -52,14 +53,10 @@ const (
 )
 
 var (
-	managedByOperatorLabel      = "managed-by"
-	managedByOperatorLabelValue = "prometheus-operator"
-	ManagedByOperatorLabels     = map[string]string{
-		managedByOperatorLabel: managedByOperatorLabelValue,
-	}
 	ShardLabelName                = "operator.prometheus.io/shard"
 	PrometheusNameLabelName       = "operator.prometheus.io/name"
 	PrometheusModeLabeLName       = "operator.prometheus.io/mode"
+	PrometheusK8sLabelName        = "app.kubernetes.io/name"
 	ProbeTimeoutSeconds     int32 = 3
 	LabelPrometheusName           = "prometheus-name"
 )
@@ -125,26 +122,21 @@ func MakeConfigurationSecret(p monitoringv1.PrometheusInterface, config Config, 
 		return nil, err
 	}
 
-	objMeta := p.GetObjectMeta()
-	typeMeta := p.GetTypeMeta()
-	return &v1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        ConfigSecretName(p),
-			Annotations: config.Annotations,
-			Labels:      config.Labels.Merge(ManagedByOperatorLabels),
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         typeMeta.APIVersion,
-				BlockOwnerDeletion: ptr.To(true),
-				Controller:         ptr.To(true),
-				Kind:               typeMeta.Kind,
-				Name:               objMeta.GetName(),
-				UID:                objMeta.GetUID(),
-			}},
-		},
+	s := &v1.Secret{
 		Data: map[string][]byte{
 			ConfigFilename: promConfig,
 		},
-	}, nil
+	}
+
+	operator.UpdateObject(
+		s,
+		operator.WithLabels(config.Labels),
+		operator.WithAnnotations(config.Annotations),
+		operator.WithManagingOwner(p),
+		operator.WithName(ConfigSecretName(p)),
+	)
+
+	return s, nil
 }
 
 func ConfigSecretName(p monitoringv1.PrometheusInterface) string {
@@ -254,7 +246,7 @@ func BuildCommonPrometheusArgs(cpf monitoringv1.CommonPrometheusFields, cg *Conf
 	return promArgs
 }
 
-// BuildCommonVolumes returns a set of volumes to be mounted on statefulset spec that are common between Prometheus Server and Agent
+// BuildCommonVolumes returns a set of volumes to be mounted on statefulset spec that are common between Prometheus Server and Agent.
 func BuildCommonVolumes(p monitoringv1.PrometheusInterface, tlsAssetSecrets []string) ([]v1.Volume, []v1.VolumeMount, error) {
 	cpf := p.GetCommonPrometheusFields()
 
@@ -495,4 +487,47 @@ func ShareProcessNamespace(p monitoringv1.PrometheusInterface) *bool {
 			monitoringv1.HTTPReloadStrategyType,
 		) == monitoringv1.ProcessSignalReloadStrategyType,
 	)
+}
+
+func MakeK8sTopologySpreadConstraint(selectorLabels map[string]string, tscs []monitoringv1.TopologySpreadConstraint) []v1.TopologySpreadConstraint {
+
+	coreTscs := make([]v1.TopologySpreadConstraint, 0, len(tscs))
+
+	for _, tsc := range tscs {
+		if tsc.AdditionalLabelSelectors == nil {
+			coreTscs = append(coreTscs, v1.TopologySpreadConstraint(tsc.CoreV1TopologySpreadConstraint))
+			continue
+		}
+
+		if tsc.LabelSelector == nil {
+			tsc.LabelSelector = &metav1.LabelSelector{
+				MatchLabels: make(map[string]string),
+			}
+		}
+
+		for key, value := range selectorLabels {
+			if *tsc.AdditionalLabelSelectors == monitoringv1.ResourceNameLabelSelector && key == ShardLabelName {
+				continue
+			}
+			tsc.LabelSelector.MatchLabels[key] = value
+		}
+
+		coreTscs = append(coreTscs, v1.TopologySpreadConstraint(tsc.CoreV1TopologySpreadConstraint))
+	}
+
+	return coreTscs
+}
+
+func GetStatupProbePeriodSecondsAndFailureThreshold(cfp monitoringv1.CommonPrometheusFields) (int32, int32) {
+	var startupPeriodSeconds float64 = 15
+	var startupFailureThreshold float64 = 60
+
+	maximumStartupDurationSeconds := float64(ptr.Deref(cfp.MaximumStartupDurationSeconds, 0))
+
+	if maximumStartupDurationSeconds >= 60 {
+		startupFailureThreshold = math.Ceil(maximumStartupDurationSeconds / 60)
+		startupPeriodSeconds = math.Ceil(maximumStartupDurationSeconds / startupFailureThreshold)
+	}
+
+	return int32(startupPeriodSeconds), int32(startupFailureThreshold)
 }
