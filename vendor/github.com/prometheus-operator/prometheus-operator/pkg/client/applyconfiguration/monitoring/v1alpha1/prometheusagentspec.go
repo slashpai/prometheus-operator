@@ -214,6 +214,16 @@ func (b *PrometheusAgentSpecApplyConfiguration) WithScrapeTimeout(value monitori
 	return b
 }
 
+// WithScrapeProtocols adds the given value to the ScrapeProtocols field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ScrapeProtocols field.
+func (b *PrometheusAgentSpecApplyConfiguration) WithScrapeProtocols(values ...monitoringv1.ScrapeProtocol) *PrometheusAgentSpecApplyConfiguration {
+	for i := range values {
+		b.ScrapeProtocols = append(b.ScrapeProtocols, values[i])
+	}
+	return b
+}
+
 // WithExternalLabels puts the entries into the ExternalLabels field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, the entries provided by each call will be put on the ExternalLabels field,
@@ -714,5 +724,18 @@ func (b *PrometheusAgentSpecApplyConfiguration) WithReloadStrategy(value monitor
 // If called multiple times, the MaximumStartupDurationSeconds field is set to the value of the last call.
 func (b *PrometheusAgentSpecApplyConfiguration) WithMaximumStartupDurationSeconds(value int32) *PrometheusAgentSpecApplyConfiguration {
 	b.MaximumStartupDurationSeconds = &value
+	return b
+}
+
+// WithScrapeClasses adds the given value to the ScrapeClasses field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ScrapeClasses field.
+func (b *PrometheusAgentSpecApplyConfiguration) WithScrapeClasses(values ...*v1.ScrapeClassApplyConfiguration) *PrometheusAgentSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithScrapeClasses")
+		}
+		b.ScrapeClasses = append(b.ScrapeClasses, *values[i])
+	}
 	return b
 }
