@@ -52,7 +52,7 @@ import (
 
 const (
 	resyncPeriod   = 5 * time.Minute
-	ControllerName = "prometheusagent-controller"
+	controllerName = "prometheusagent-controller"
 )
 
 // Operator manages life cycle of Prometheus agent deployments and
@@ -93,7 +93,9 @@ type Operator struct {
 }
 
 // New creates a new controller.
-func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger log.Logger, r prometheus.Registerer, scrapeConfigSupported, canReadStorageClass, canEmitEvents bool) (*Operator, error) {
+func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger log.Logger, r prometheus.Registerer, scrapeConfigSupported, canReadStorageClass bool, erf operator.EventRecorderFactory) (*Operator, error) {
+	logger = log.With(logger, "component", controllerName)
+
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("instantiating kubernetes client failed: %w", err)
@@ -112,11 +114,6 @@ func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger
 	// All the metrics exposed by the controller get the controller="prometheus-agent" label.
 	r = prometheus.WrapRegistererWith(prometheus.Labels{"controller": "prometheus-agent"}, r)
 
-	var eventsClient kubernetes.Interface
-	if canEmitEvents {
-		eventsClient = client
-	}
-
 	o := &Operator{
 		kclient:  client,
 		mdClient: mdClient,
@@ -134,7 +131,7 @@ func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger
 		reconciliations:       &operator.ReconciliationTracker{},
 		scrapeConfigSupported: scrapeConfigSupported,
 		canReadStorageClass:   canReadStorageClass,
-		eventRecorder:         operator.NewEventRecorder(eventsClient, ControllerName),
+		eventRecorder:         erf(client, controllerName),
 	}
 	o.metrics.MustRegister(
 		o.reconciliations,
@@ -615,7 +612,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 			cg,
 			newSSetInputHash,
 			int32(shard),
-			tlsAssets.SecretNames())
+			tlsAssets)
 		if err != nil {
 			return fmt.Errorf("making statefulset failed: %w", err)
 		}
@@ -731,6 +728,10 @@ func (c *Operator) createOrUpdateConfigurationSecret(ctx context.Context, p *mon
 		return err
 	}
 
+	if err := prompkg.AddScrapeClassesToStore(ctx, store, p.GetNamespace(), p.Spec.ScrapeClasses); err != nil {
+		return fmt.Errorf("failed to process scrape classes: %w", err)
+	}
+
 	sClient := c.kclient.CoreV1().Secrets(p.Namespace)
 	additionalScrapeConfigs, err := k8sutil.LoadSecretRef(ctx, c.logger, sClient, p.Spec.AdditionalScrapeConfigs)
 	if err != nil {
@@ -779,7 +780,7 @@ func createSSetInputHash(p monitoringv1alpha1.PrometheusAgent, c prompkg.Config,
 		PrometheusWebHTTP2    *bool
 		Config                prompkg.Config
 		StatefulSetSpec       appsv1.StatefulSetSpec
-		Assets                []string `hash:"set"`
+		ShardedSecret         *operator.ShardedSecret
 	}{
 		PrometheusLabels:      p.Labels,
 		PrometheusAnnotations: p.Annotations,
@@ -787,7 +788,7 @@ func createSSetInputHash(p monitoringv1alpha1.PrometheusAgent, c prompkg.Config,
 		PrometheusWebHTTP2:    http2,
 		Config:                c,
 		StatefulSetSpec:       ssSpec,
-		Assets:                tlsAssets.SecretNames(),
+		ShardedSecret:         tlsAssets,
 	},
 		nil,
 	)

@@ -58,7 +58,7 @@ import (
 
 const (
 	resyncPeriod   = 5 * time.Minute
-	ControllerName = "alertmanager-controller"
+	controllerName = "alertmanager-controller"
 )
 
 // Config defines the operator's parameters for the Alertmanager controller.
@@ -105,7 +105,9 @@ type Operator struct {
 }
 
 // New creates a new controller.
-func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger log.Logger, r prometheus.Registerer, canReadStorageClass, canEmitEvents bool) (*Operator, error) {
+func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger log.Logger, r prometheus.Registerer, canReadStorageClass bool, erf operator.EventRecorderFactory) (*Operator, error) {
+	logger = log.With(logger, "component", controllerName)
+
 	client, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("instantiating kubernetes client failed: %w", err)
@@ -124,11 +126,6 @@ func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger
 	// All the metrics exposed by the controller get the controller="alertmanager" label.
 	r = prometheus.WrapRegistererWith(prometheus.Labels{"controller": "alertmanager"}, r)
 
-	var eventsClient kubernetes.Interface
-	if canEmitEvents {
-		eventsClient = client
-	}
-
 	o := &Operator{
 		kclient:    client,
 		mdClient:   mdClient,
@@ -140,7 +137,7 @@ func New(ctx context.Context, restConfig *rest.Config, c operator.Config, logger
 
 		metrics:             operator.NewMetrics(r),
 		reconciliations:     &operator.ReconciliationTracker{},
-		eventRecorder:       operator.NewEventRecorder(eventsClient, ControllerName),
+		eventRecorder:       erf(client, controllerName),
 		canReadStorageClass: canReadStorageClass,
 
 		config: Config{
@@ -687,7 +684,7 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 		return err
 	}
 
-	sset, err := makeStatefulSet(logger, am, c.config, newSSetInputHash, tlsShardedSecret.SecretNames())
+	sset, err := makeStatefulSet(logger, am, c.config, newSSetInputHash, tlsShardedSecret)
 	if err != nil {
 		return fmt.Errorf("failed to generate statefulset: %w", err)
 	}
@@ -825,7 +822,7 @@ func createSSetInputHash(a monitoringv1.Alertmanager, c Config, tlsAssets *opera
 		AlertmanagerWebHTTP2    *bool
 		Config                  Config
 		StatefulSetSpec         appsv1.StatefulSetSpec
-		Assets                  []string `hash:"set"`
+		ShardedSecret           *operator.ShardedSecret
 	}{
 		AlertmanagerLabels:      a.Labels,
 		AlertmanagerAnnotations: a.Annotations,
@@ -833,7 +830,7 @@ func createSSetInputHash(a monitoringv1.Alertmanager, c Config, tlsAssets *opera
 		AlertmanagerWebHTTP2:    http2,
 		Config:                  c,
 		StatefulSetSpec:         s,
-		Assets:                  tlsAssets.SecretNames(),
+		ShardedSecret:           tlsAssets,
 	},
 		nil,
 	)
