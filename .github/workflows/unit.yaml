@@ -1,8 +1,6 @@
 name: unit
 on:
   pull_request:
-    paths-ignore:
-      - '**/*.md'
   push:
     branches:
       - 'release-*'
@@ -10,12 +8,40 @@ on:
       - 'main'
     tags:
       - 'v*'
-    paths-ignore:
-      - '**/*.md'
 jobs:
+  check-only-doc-changes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Get changed files
+        id: changed_files
+        run: |
+          # Fetch the branch name associated with the pull request
+          PR_BRANCH="${{ github.head_ref }}"
+
+          # Fetch the base branch name
+          BASE_BRANCH="${{ github.base_ref }}"
+
+          # Get the list of changed files between the base and PR branches
+          CHANGED_FILES=$(git diff --name-only $BASE_BRANCH $PR_BRANCH)
+
+          # Store the list of changed files as an output
+          echo "::set-output name=files::$CHANGED_FILES"
+      # Check if there are only changes to .md files
+      - name: Check for only doc file changes
+        id: doc_changes
+        run: |
+          if echo "${{ steps.changed_files.outputs.files }}" | grep -qv '\.md$'; then
+            echo "::set-output name=only_doc_changes::false"
+          else
+            echo "::set-output name=only_doc_changes::true"
+          fi
   unit-tests:
     runs-on: ubuntu-latest
     name: Unit tests
+    needs: check-only-doc-changes
+    if: ${{ needs.check-only-doc-changes.outputs.only_doc_changes == 'false' }}
     steps:
     - uses: actions/checkout@v4
     - name: Import environment variables from file
@@ -28,6 +54,8 @@ jobs:
   extended-tests:
     runs-on: ubuntu-latest
     name: Extended tests
+    needs: check-only-doc-changes
+    if: ${{ needs.check-only-doc-changes.outputs.only_doc_changes == 'false' }}
     steps:
     - uses: actions/checkout@v4
     - name: Import environment variables from file
