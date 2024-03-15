@@ -30,6 +30,8 @@ import (
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 )
 
+// actions check
+
 // testScrapeConfigCreation tests multiple ScrapeConfig definitions.
 func testScrapeConfigCreation(t *testing.T) {
 	skipPrometheusTests(t)
