@@ -34,15 +34,18 @@ type ScrapeConfigSpecApplyConfiguration struct {
 	AzureSDConfigs                []AzureSDConfigApplyConfiguration                 `json:"azureSDConfigs,omitempty"`
 	GCESDConfigs                  []GCESDConfigApplyConfiguration                   `json:"gceSDConfigs,omitempty"`
 	OpenStackSDConfigs            []OpenStackSDConfigApplyConfiguration             `json:"openstackSDConfigs,omitempty"`
+	DigitalOceanSDConfigs         []DigitalOceanSDConfigApplyConfiguration          `json:"digitalOceanSDConfigs,omitempty"`
 	RelabelConfigs                []*v1.RelabelConfig                               `json:"relabelings,omitempty"`
 	MetricsPath                   *string                                           `json:"metricsPath,omitempty"`
 	ScrapeInterval                *v1.Duration                                      `json:"scrapeInterval,omitempty"`
 	ScrapeTimeout                 *v1.Duration                                      `json:"scrapeTimeout,omitempty"`
+	ScrapeProtocols               []v1.ScrapeProtocol                               `json:"scrapeProtocols,omitempty"`
 	HonorTimestamps               *bool                                             `json:"honorTimestamps,omitempty"`
 	TrackTimestampsStaleness      *bool                                             `json:"trackTimestampsStaleness,omitempty"`
 	HonorLabels                   *bool                                             `json:"honorLabels,omitempty"`
 	Params                        map[string][]string                               `json:"params,omitempty"`
 	Scheme                        *string                                           `json:"scheme,omitempty"`
+	EnableCompression             *bool                                             `json:"enableCompression,omitempty"`
 	BasicAuth                     *monitoringv1.BasicAuthApplyConfiguration         `json:"basicAuth,omitempty"`
 	Authorization                 *monitoringv1.SafeAuthorizationApplyConfiguration `json:"authorization,omitempty"`
 	TLSConfig                     *monitoringv1.SafeTLSConfigApplyConfiguration     `json:"tlsConfig,omitempty"`
@@ -54,6 +57,7 @@ type ScrapeConfigSpecApplyConfiguration struct {
 	KeepDroppedTargets            *uint64                                           `json:"keepDroppedTargets,omitempty"`
 	MetricRelabelConfigs          []*v1.RelabelConfig                               `json:"metricRelabelings,omitempty"`
 	ProxyConfigApplyConfiguration `json:",inline"`
+	ScrapeClassName               *string `json:"scrapeClass,omitempty"`
 }
 
 // ScrapeConfigSpecApplyConfiguration constructs an declarative configuration of the ScrapeConfigSpec type for use with
@@ -192,6 +196,19 @@ func (b *ScrapeConfigSpecApplyConfiguration) WithOpenStackSDConfigs(values ...*O
 	return b
 }
 
+// WithDigitalOceanSDConfigs adds the given value to the DigitalOceanSDConfigs field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the DigitalOceanSDConfigs field.
+func (b *ScrapeConfigSpecApplyConfiguration) WithDigitalOceanSDConfigs(values ...*DigitalOceanSDConfigApplyConfiguration) *ScrapeConfigSpecApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithDigitalOceanSDConfigs")
+		}
+		b.DigitalOceanSDConfigs = append(b.DigitalOceanSDConfigs, *values[i])
+	}
+	return b
+}
+
 // WithRelabelConfigs adds the given value to the RelabelConfigs field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the RelabelConfigs field.
@@ -226,6 +243,16 @@ func (b *ScrapeConfigSpecApplyConfiguration) WithScrapeInterval(value v1.Duratio
 // If called multiple times, the ScrapeTimeout field is set to the value of the last call.
 func (b *ScrapeConfigSpecApplyConfiguration) WithScrapeTimeout(value v1.Duration) *ScrapeConfigSpecApplyConfiguration {
 	b.ScrapeTimeout = &value
+	return b
+}
+
+// WithScrapeProtocols adds the given value to the ScrapeProtocols field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ScrapeProtocols field.
+func (b *ScrapeConfigSpecApplyConfiguration) WithScrapeProtocols(values ...v1.ScrapeProtocol) *ScrapeConfigSpecApplyConfiguration {
+	for i := range values {
+		b.ScrapeProtocols = append(b.ScrapeProtocols, values[i])
+	}
 	return b
 }
 
@@ -272,6 +299,14 @@ func (b *ScrapeConfigSpecApplyConfiguration) WithParams(entries map[string][]str
 // If called multiple times, the Scheme field is set to the value of the last call.
 func (b *ScrapeConfigSpecApplyConfiguration) WithScheme(value string) *ScrapeConfigSpecApplyConfiguration {
 	b.Scheme = &value
+	return b
+}
+
+// WithEnableCompression sets the EnableCompression field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the EnableCompression field is set to the value of the last call.
+func (b *ScrapeConfigSpecApplyConfiguration) WithEnableCompression(value bool) *ScrapeConfigSpecApplyConfiguration {
+	b.EnableCompression = &value
 	return b
 }
 
@@ -357,5 +392,13 @@ func (b *ScrapeConfigSpecApplyConfiguration) WithMetricRelabelConfigs(values ...
 		}
 		b.MetricRelabelConfigs = append(b.MetricRelabelConfigs, *values[i])
 	}
+	return b
+}
+
+// WithScrapeClassName sets the ScrapeClassName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ScrapeClassName field is set to the value of the last call.
+func (b *ScrapeConfigSpecApplyConfiguration) WithScrapeClassName(value string) *ScrapeConfigSpecApplyConfiguration {
+	b.ScrapeClassName = &value
 	return b
 }

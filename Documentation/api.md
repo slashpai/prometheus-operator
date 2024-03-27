@@ -929,6 +929,23 @@ be accepted.</p>
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>labelLimit</code><br/>
 <em>
 uint64
@@ -994,6 +1011,18 @@ AttachMetadata
 <p><code>attachMetadata</code> defines additional metadata which is added to the
 discovered targets.</p>
 <p>It requires Prometheus &gt;= v2.37.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </table>
@@ -1245,6 +1274,23 @@ uint64
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>labelLimit</code><br/>
 <em>
 uint64
@@ -1294,6 +1340,18 @@ uint64
 <p>Per-scrape limit on the number of targets dropped by relabeling
 that will be kept in memory. 0 means no limit.</p>
 <p>It requires Prometheus &gt;= v2.47.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </table>
@@ -1720,6 +1778,23 @@ Duration
 </td>
 <td>
 <p>Number of seconds to wait until a scrape request times out.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
 </td>
 </tr>
 <tr>
@@ -2585,6 +2660,20 @@ If set, the value should be greater than 60 (seconds). Otherwise it will be equa
 </tr>
 <tr>
 <td>
+<code>scrapeClasses</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeClass">
+[]ScrapeClass
+</a>
+</em>
+</td>
+<td>
+<p>EXPERIMENTAL List of scrape classes to expose to monitors and other scrape configs.
+This is experimental feature and might change in the future.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>baseImage</code><br/>
 <em>
 string
@@ -3170,6 +3259,23 @@ that will be accepted.</p>
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>targetLimit</code><br/>
 <em>
 uint64
@@ -3248,6 +3354,18 @@ AttachMetadata
 <p><code>attachMetadata</code> defines additional metadata which is added to the
 discovered targets.</p>
 <p>It requires Prometheus &gt;= v2.37.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </table>
@@ -6129,6 +6247,23 @@ Duration
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>externalLabels</code><br/>
 <em>
 map[string]string
@@ -6988,6 +7123,20 @@ int32
 If set, the value should be greater than 60 (seconds). Otherwise it will be equal to 600 seconds (15 minutes).</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>scrapeClasses</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeClass">
+[]ScrapeClass
+</a>
+</em>
+</td>
+<td>
+<p>EXPERIMENTAL List of scrape classes to expose to monitors and other scrape configs.
+This is experimental feature and might change in the future.</p>
+</td>
+</tr>
 </tbody>
 </table>
 <h3 id="monitoring.coreos.com/v1.Condition">Condition
@@ -7346,7 +7495,7 @@ be ignored. A null or empty list means only match against labelSelector.</p>
 <h3 id="monitoring.coreos.com/v1.Duration">Duration
 (<code>string</code> alias)</h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.AlertmanagerGlobalConfig">AlertmanagerGlobalConfig</a>, <a href="#monitoring.coreos.com/v1.CommonPrometheusFields">CommonPrometheusFields</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.MetadataConfig">MetadataConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1.PrometheusSpec">PrometheusSpec</a>, <a href="#monitoring.coreos.com/v1.PrometheusTracingConfig">PrometheusTracingConfig</a>, <a href="#monitoring.coreos.com/v1.QuerySpec">QuerySpec</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1.Rule">Rule</a>, <a href="#monitoring.coreos.com/v1.RuleGroup">RuleGroup</a>, <a href="#monitoring.coreos.com/v1.TSDBSpec">TSDBSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosRulerSpec">ThanosRulerSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosSpec">ThanosSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.AzureSDConfig">AzureSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DNSSDConfig">DNSSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.EC2SDConfig">EC2SDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.FileSDConfig">FileSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.GCESDConfig">GCESDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.OpenStackSDConfig">OpenStackSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.AlertmanagerGlobalConfig">AlertmanagerGlobalConfig</a>, <a href="#monitoring.coreos.com/v1.CommonPrometheusFields">CommonPrometheusFields</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.MetadataConfig">MetadataConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1.PrometheusSpec">PrometheusSpec</a>, <a href="#monitoring.coreos.com/v1.PrometheusTracingConfig">PrometheusTracingConfig</a>, <a href="#monitoring.coreos.com/v1.QuerySpec">QuerySpec</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1.Rule">Rule</a>, <a href="#monitoring.coreos.com/v1.RuleGroup">RuleGroup</a>, <a href="#monitoring.coreos.com/v1.TSDBSpec">TSDBSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosRulerSpec">ThanosRulerSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosSpec">ThanosSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.AzureSDConfig">AzureSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DNSSDConfig">DNSSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.EC2SDConfig">EC2SDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.FileSDConfig">FileSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.GCESDConfig">GCESDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.OpenStackSDConfig">OpenStackSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
 </p>
 <div>
 <p>Duration is a valid time duration that can be parsed by Prometheus model.ParseDuration() function.
@@ -7690,9 +7839,9 @@ k8s.io/apimachinery/pkg/util/intstr.IntOrString
 </em>
 </td>
 <td>
-<p>Name or number of the target port of the <code>Pod</code> object behind the Service, the
-port must be specified with container port property.</p>
-<p>Deprecated: use <code>port</code> instead.</p>
+<em>(Optional)</em>
+<p>Name or number of the target port of the <code>Pod</code> object behind the
+Service. The port must be specified with the container&rsquo;s port property.</p>
 </td>
 </tr>
 <tr>
@@ -8483,7 +8632,7 @@ Examples: <code>30s</code>, <code>1m</code>, <code>1h20m15s</code>, <code>15d</c
 <h3 id="monitoring.coreos.com/v1.OAuth2">OAuth2
 </h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
 </p>
 <div>
 <p>OAuth2 configures OAuth2 settings.</p>
@@ -9161,6 +9310,23 @@ be accepted.</p>
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>labelLimit</code><br/>
 <em>
 uint64
@@ -9226,6 +9392,18 @@ AttachMetadata
 <p><code>attachMetadata</code> defines additional metadata which is added to the
 discovered targets.</p>
 <p>It requires Prometheus &gt;= v2.37.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </tbody>
@@ -9432,6 +9610,23 @@ uint64
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>labelLimit</code><br/>
 <em>
 uint64
@@ -9481,6 +9676,18 @@ uint64
 <p>Per-scrape limit on the number of targets dropped by relabeling
 that will be kept in memory. 0 means no limit.</p>
 <p>It requires Prometheus &gt;= v2.47.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </tbody>
@@ -10279,6 +10486,23 @@ Duration
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>externalLabels</code><br/>
 <em>
 map[string]string
@@ -11136,6 +11360,20 @@ int32
 <em>(Optional)</em>
 <p>Defines the maximum time that the <code>prometheus</code> container&rsquo;s startup probe will wait before being considered failed. The startup probe will return success after the WAL replay is complete.
 If set, the value should be greater than 60 (seconds). Otherwise it will be equal to 600 seconds (15 minutes).</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClasses</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeClass">
+[]ScrapeClass
+</a>
+</em>
+</td>
+<td>
+<p>EXPERIMENTAL List of scrape classes to expose to monitors and other scrape configs.
+This is experimental feature and might change in the future.</p>
 </td>
 </tr>
 <tr>
@@ -12889,7 +13127,7 @@ Alertmanager.</p>
 <h3 id="monitoring.coreos.com/v1.SafeAuthorization">SafeAuthorization
 </h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.Authorization">Authorization</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.Authorization">Authorization</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpoint">PodMetricsEndpoint</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
 </p>
 <div>
 <p>SafeAuthorization specifies a subset of the Authorization struct, that is
@@ -12935,7 +13173,7 @@ Kubernetes core/v1.SecretKeySelector
 <h3 id="monitoring.coreos.com/v1.SafeTLSConfig">SafeTLSConfig
 </h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpointTLSConfig">PodMetricsEndpointTLSConfig</a>, <a href="#monitoring.coreos.com/v1.ProbeTLSConfig">ProbeTLSConfig</a>, <a href="#monitoring.coreos.com/v1.TLSConfig">TLSConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.EmailConfig">EmailConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.OpenStackSDConfig">OpenStackSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>, <a href="#monitoring.coreos.com/v1beta1.EmailConfig">EmailConfig</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1.PodMetricsEndpointTLSConfig">PodMetricsEndpointTLSConfig</a>, <a href="#monitoring.coreos.com/v1.ProbeTLSConfig">ProbeTLSConfig</a>, <a href="#monitoring.coreos.com/v1.TLSConfig">TLSConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.EmailConfig">EmailConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPConfig">HTTPConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.OpenStackSDConfig">OpenStackSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>, <a href="#monitoring.coreos.com/v1beta1.EmailConfig">EmailConfig</a>, <a href="#monitoring.coreos.com/v1beta1.HTTPConfig">HTTPConfig</a>)
 </p>
 <div>
 <p>SafeTLSConfig specifies safe TLS configuration parameters.</p>
@@ -13011,6 +13249,74 @@ bool
 </tr>
 </tbody>
 </table>
+<h3 id="monitoring.coreos.com/v1.ScrapeClass">ScrapeClass
+</h3>
+<p>
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.CommonPrometheusFields">CommonPrometheusFields</a>)
+</p>
+<div>
+</div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>name</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Name of the scrape class.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>default</code><br/>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Default indicates that the scrape applies to all scrape objects that don&rsquo;t configure an explicit scrape class name.</p>
+<p>Only one scrape class can be set as default.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>tlsConfig</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.TLSConfig">
+TLSConfig
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>TLSConfig section for scrapes.</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="monitoring.coreos.com/v1.ScrapeProtocol">ScrapeProtocol
+(<code>string</code> alias)</h3>
+<p>
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.CommonPrometheusFields">CommonPrometheusFields</a>, <a href="#monitoring.coreos.com/v1.PodMonitorSpec">PodMonitorSpec</a>, <a href="#monitoring.coreos.com/v1.ProbeSpec">ProbeSpec</a>, <a href="#monitoring.coreos.com/v1.ServiceMonitorSpec">ServiceMonitorSpec</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
+</p>
+<div>
+<p>ScrapeProtocol represents a protocol used by Prometheus for scraping metrics.
+Supported values are:
+* <code>OpenMetricsText0.0.1</code>
+* <code>OpenMetricsText1.0.0</code>
+* <code>PrometheusProto</code>
+* <code>PrometheusText0.0.4</code></p>
+</div>
 <h3 id="monitoring.coreos.com/v1.SecretOrConfigMap">SecretOrConfigMap
 </h3>
 <p>
@@ -13171,6 +13477,23 @@ that will be accepted.</p>
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p><code>scrapeProtocols</code> defines the protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>targetLimit</code><br/>
 <em>
 uint64
@@ -13249,6 +13572,18 @@ AttachMetadata
 <p><code>attachMetadata</code> defines additional metadata which is added to the
 discovered targets.</p>
 <p>It requires Prometheus &gt;= v2.37.0.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </tbody>
@@ -13492,7 +13827,7 @@ is to use a label selector alongside manually created PersistentVolumes.</p>
 <h3 id="monitoring.coreos.com/v1.TLSConfig">TLSConfig
 </h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.APIServerConfig">APIServerConfig</a>, <a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.PrometheusTracingConfig">PrometheusTracingConfig</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosRulerSpec">ThanosRulerSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosSpec">ThanosSpec</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1.APIServerConfig">APIServerConfig</a>, <a href="#monitoring.coreos.com/v1.AlertmanagerEndpoints">AlertmanagerEndpoints</a>, <a href="#monitoring.coreos.com/v1.Endpoint">Endpoint</a>, <a href="#monitoring.coreos.com/v1.PrometheusTracingConfig">PrometheusTracingConfig</a>, <a href="#monitoring.coreos.com/v1.RemoteReadSpec">RemoteReadSpec</a>, <a href="#monitoring.coreos.com/v1.RemoteWriteSpec">RemoteWriteSpec</a>, <a href="#monitoring.coreos.com/v1.ScrapeClass">ScrapeClass</a>, <a href="#monitoring.coreos.com/v1.ThanosRulerSpec">ThanosRulerSpec</a>, <a href="#monitoring.coreos.com/v1.ThanosSpec">ThanosSpec</a>)
 </p>
 <div>
 <p>TLSConfig extends the safe TLS configuration with file parameters.</p>
@@ -15873,6 +16208,23 @@ Duration
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>externalLabels</code><br/>
 <em>
 map[string]string
@@ -16732,6 +17084,20 @@ int32
 If set, the value should be greater than 60 (seconds). Otherwise it will be equal to 600 seconds (15 minutes).</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>scrapeClasses</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeClass">
+[]ScrapeClass
+</a>
+</em>
+</td>
+<td>
+<p>EXPERIMENTAL List of scrape classes to expose to monitors and other scrape configs.
+This is experimental feature and might change in the future.</p>
+</td>
+</tr>
 </table>
 </td>
 </tr>
@@ -16952,6 +17318,20 @@ ScrapeConfigSpec
 </tr>
 <tr>
 <td>
+<code>digitalOceanSDConfigs</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">
+[]DigitalOceanSDConfig
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>DigitalOceanSDConfigs defines a list of DigitalOcean service discovery configurations.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>relabelings</code><br/>
 <em>
 <a href="#monitoring.coreos.com/v1.RelabelConfig">
@@ -17005,6 +17385,23 @@ Duration
 <td>
 <em>(Optional)</em>
 <p>ScrapeTimeout is the number of seconds to wait until a scrape request times out.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
 </td>
 </tr>
 <tr>
@@ -17069,6 +17466,20 @@ string
 <em>(Optional)</em>
 <p>Configures the protocol scheme used for requests.
 If empty, Prometheus uses HTTP by default.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>enableCompression</code><br/>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>When false, Prometheus will request uncompressed response from the scraped target.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+<p>If unset, Prometheus uses true by default.</p>
 </td>
 </tr>
 <tr>
@@ -17202,6 +17613,18 @@ that will be kept in memory. 0 means no limit.</p>
 <td>
 <em>(Optional)</em>
 <p>MetricRelabelConfigs to apply to samples before ingestion.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </table>
@@ -17758,8 +18181,9 @@ string
 </td>
 <td>
 <em>(Optional)</em>
-<p>The type of DNS query to perform. One of SRV, A, AAAA or MX.
+<p>The type of DNS query to perform. One of SRV, A, AAAA, MX or NS.
 If not set, Prometheus uses its default value.</p>
+<p>When set to NS, It requires Prometheus &gt;= 2.49.0.</p>
 </td>
 </tr>
 <tr>
@@ -17813,6 +18237,120 @@ int
 </td>
 <td>
 <p>End of the inclusive range</p>
+</td>
+</tr>
+</tbody>
+</table>
+<h3 id="monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig
+</h3>
+<p>
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
+</p>
+<div>
+<p>DigitalOceanSDConfig allow retrieving scrape targets from DigitalOcean&rsquo;s Droplets API.
+This service discovery uses the public IPv4 address by default, by that can be changed with relabeling
+See <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/#digitalocean_sd_config">https://prometheus.io/docs/prometheus/latest/configuration/configuration/#digitalocean_sd_config</a></p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>authorization</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.SafeAuthorization">
+SafeAuthorization
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Authorization header configuration to authenticate against the DigitalOcean API.
+Cannot be set at the same time as <code>oauth2</code>.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>oauth2</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.OAuth2">
+OAuth2
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Optional OAuth 2.0 configuration.
+Cannot be set at the same time as <code>authorization</code>.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>followRedirects</code><br/>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Configure whether HTTP requests follow HTTP 3xx redirects.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>enableHTTP2</code><br/>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Whether to enable HTTP2.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>tlsConfig</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.SafeTLSConfig">
+SafeTLSConfig
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>TLS configuration applying to the target HTTP endpoint.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>port</code><br/>
+<em>
+int
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The port to scrape metrics from.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>refreshInterval</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.Duration">
+Duration
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Refresh interval to re-read the instance list.</p>
 </td>
 </tr>
 </tbody>
@@ -20510,6 +21048,23 @@ Duration
 </tr>
 <tr>
 <td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>externalLabels</code><br/>
 <em>
 map[string]string
@@ -21369,12 +21924,26 @@ int32
 If set, the value should be greater than 60 (seconds). Otherwise it will be equal to 600 seconds (15 minutes).</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>scrapeClasses</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeClass">
+[]ScrapeClass
+</a>
+</em>
+</td>
+<td>
+<p>EXPERIMENTAL List of scrape classes to expose to monitors and other scrape configs.
+This is experimental feature and might change in the future.</p>
+</td>
+</tr>
 </tbody>
 </table>
 <h3 id="monitoring.coreos.com/v1alpha1.ProxyConfig">ProxyConfig
 </h3>
 <p>
-(<em>Appears on:</em><a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
+(<em>Appears on:</em><a href="#monitoring.coreos.com/v1alpha1.ConsulSDConfig">ConsulSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">DigitalOceanSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.HTTPSDConfig">HTTPSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.KubernetesSDConfig">KubernetesSDConfig</a>, <a href="#monitoring.coreos.com/v1alpha1.ScrapeConfigSpec">ScrapeConfigSpec</a>)
 </p>
 <div>
 </div>
@@ -22358,6 +22927,20 @@ HTTPConfig
 </tr>
 <tr>
 <td>
+<code>digitalOceanSDConfigs</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1alpha1.DigitalOceanSDConfig">
+[]DigitalOceanSDConfig
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>DigitalOceanSDConfigs defines a list of DigitalOcean service discovery configurations.</p>
+</td>
+</tr>
+<tr>
+<td>
 <code>relabelings</code><br/>
 <em>
 <a href="#monitoring.coreos.com/v1.RelabelConfig">
@@ -22411,6 +22994,23 @@ Duration
 <td>
 <em>(Optional)</em>
 <p>ScrapeTimeout is the number of seconds to wait until a scrape request times out.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeProtocols</code><br/>
+<em>
+<a href="#monitoring.coreos.com/v1.ScrapeProtocol">
+[]ScrapeProtocol
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The protocols to negotiate during a scrape. It tells clients the
+protocols supported by Prometheus in order of preference (from most to least preferred).</p>
+<p>If unset, Prometheus uses its default value.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
 </td>
 </tr>
 <tr>
@@ -22475,6 +23075,20 @@ string
 <em>(Optional)</em>
 <p>Configures the protocol scheme used for requests.
 If empty, Prometheus uses HTTP by default.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>enableCompression</code><br/>
+<em>
+bool
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>When false, Prometheus will request uncompressed response from the scraped target.</p>
+<p>It requires Prometheus &gt;= v2.49.0.</p>
+<p>If unset, Prometheus uses true by default.</p>
 </td>
 </tr>
 <tr>
@@ -22608,6 +23222,18 @@ that will be kept in memory. 0 means no limit.</p>
 <td>
 <em>(Optional)</em>
 <p>MetricRelabelConfigs to apply to samples before ingestion.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>scrapeClass</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>The scrape class to apply.</p>
 </td>
 </tr>
 </tbody>
