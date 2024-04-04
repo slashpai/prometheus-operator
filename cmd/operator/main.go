@@ -29,6 +29,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	"golang.org/x/sync/errgroup"
@@ -42,6 +43,7 @@ import (
 	"github.com/prometheus-operator/prometheus-operator/pkg/admission"
 	alertmanagercontroller "github.com/prometheus-operator/prometheus-operator/pkg/alertmanager"
 	"github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"github.com/prometheus-operator/prometheus-operator/pkg/k8sutil"
 	"github.com/prometheus-operator/prometheus-operator/pkg/kubelet"
@@ -106,8 +108,9 @@ var (
 	serverConfig = server.DefaultConfig(":8080", false)
 
 	// Parameters for the kubelet endpoints controller.
-	kubeletObject   string
-	kubeletSelector operator.LabelSelector
+	kubeletObject       string
+	kubeletSelector     operator.LabelSelector
+	nodeAddressPriority operator.NodeAddressPriority
 )
 
 func parseFlags(fs *flag.FlagSet) {
@@ -124,6 +127,7 @@ func parseFlags(fs *flag.FlagSet) {
 
 	fs.StringVar(&kubeletObject, "kubelet-service", "", "Service/Endpoints object to write kubelets into in format \"namespace/name\"")
 	fs.Var(&kubeletSelector, "kubelet-selector", "Label selector to filter nodes.")
+	fs.Var(&nodeAddressPriority, "kubelet-node-address-priority", "Node address priority used by kubelet. Either 'internal' or 'external'. Default: 'internal'.")
 
 	// The Prometheus config reloader image is released along with the
 	// Prometheus Operator image, tagged with the same semver version. Default to
@@ -139,6 +143,7 @@ func parseFlags(fs *flag.FlagSet) {
 	fs.StringVar(&cfg.AlertmanagerDefaultBaseImage, "alertmanager-default-base-image", operator.DefaultAlertmanagerBaseImage, "Alertmanager default base image (path without tag/version)")
 	fs.StringVar(&cfg.PrometheusDefaultBaseImage, "prometheus-default-base-image", operator.DefaultPrometheusBaseImage, "Prometheus default base image (path without tag/version)")
 	fs.StringVar(&cfg.ThanosDefaultBaseImage, "thanos-default-base-image", operator.DefaultThanosBaseImage, "Thanos default base image (path without tag/version)")
+	fs.StringVar(&cfg.ControllerID, "controller-id", "", "Value used by the operator to filter Alertmanager, Prometheus, PrometheusAgent and ThanosRuler objects that it should reconcile. If the value isn't empty, the operator only reconciles objects with an `operator.prometheus.io/controller-id` annotation of the same value. Otherwise the operator reconciles all objects without the annotation or with an empty annotation value.")
 
 	fs.Var(cfg.Namespaces.AllowList, "namespaces", "Namespaces to scope the interaction of the Prometheus Operator and the apiserver (allow list). This is mutually exclusive with --deny-namespaces.")
 	fs.Var(cfg.Namespaces.DenyList, "deny-namespaces", "Namespaces not to scope the interaction of the Prometheus Operator (deny list). This is mutually exclusive with --namespaces.")
@@ -282,11 +287,40 @@ func run(fs *flag.FlagSet) int {
 		return 1
 	}
 
-	po, err := prometheuscontroller.New(ctx, restConfig, cfg, logger, r, scrapeConfigSupported, canReadStorageClass, eventRecorderFactory)
+	prometheusSupported, err := checkPrerequisites(
+		ctx,
+		logger,
+		kclient,
+		cfg.Namespaces.PrometheusAllowList.Slice(),
+		monitoringv1.SchemeGroupVersion,
+		monitoringv1.PrometheusName,
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: monitoringv1.PrometheusName,
+			Verbs:    []string{"get", "list", "watch"},
+		},
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: fmt.Sprintf("%s/status", monitoringv1.PrometheusName),
+			Verbs:    []string{"update"},
+		},
+	)
 	if err != nil {
-		level.Error(logger).Log("msg", "instantiating prometheus controller failed", "err", err)
+		level.Error(logger).Log("msg", "failed to check Prometheus support", "err", err)
 		cancel()
 		return 1
+	}
+
+	var po *prometheuscontroller.Operator
+	if prometheusSupported {
+		po, err = prometheuscontroller.New(ctx, restConfig, cfg, logger, r, scrapeConfigSupported, canReadStorageClass, eventRecorderFactory)
+		if err != nil {
+			level.Error(logger).Log("msg", "instantiating prometheus controller failed", "err", err)
+			cancel()
+			return 1
+		}
 	}
 
 	prometheusAgentSupported, err := checkPrerequisites(
@@ -325,18 +359,76 @@ func run(fs *flag.FlagSet) int {
 		}
 	}
 
-	ao, err := alertmanagercontroller.New(ctx, restConfig, cfg, logger, r, canReadStorageClass, eventRecorderFactory)
+	alertmanagerSupported, err := checkPrerequisites(
+		ctx,
+		logger,
+		kclient,
+		cfg.Namespaces.AlertmanagerAllowList.Slice(),
+		monitoringv1.SchemeGroupVersion,
+		monitoringv1.AlertmanagerName,
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: monitoringv1.AlertmanagerName,
+			Verbs:    []string{"get", "list", "watch"},
+		},
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: fmt.Sprintf("%s/status", monitoringv1.AlertmanagerName),
+			Verbs:    []string{"update"},
+		},
+	)
 	if err != nil {
-		level.Error(logger).Log("msg", "instantiating alertmanager controller failed", "err", err)
+		level.Error(logger).Log("msg", "failed to check Alertmanager support", "err", err)
 		cancel()
 		return 1
 	}
 
-	to, err := thanoscontroller.New(ctx, restConfig, cfg, logger, r, canReadStorageClass, eventRecorderFactory)
+	var ao *alertmanagercontroller.Operator
+	if alertmanagerSupported {
+		ao, err = alertmanagercontroller.New(ctx, restConfig, cfg, logger, r, canReadStorageClass, eventRecorderFactory)
+		if err != nil {
+			level.Error(logger).Log("msg", "instantiating alertmanager controller failed", "err", err)
+			cancel()
+			return 1
+		}
+	}
+
+	thanosRulerSupported, err := checkPrerequisites(
+		ctx,
+		logger,
+		kclient,
+		cfg.Namespaces.ThanosRulerAllowList.Slice(),
+		monitoringv1.SchemeGroupVersion,
+		monitoringv1.ThanosRulerName,
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: monitoringv1.ThanosRulerName,
+			Verbs:    []string{"get", "list", "watch"},
+		},
+		k8sutil.ResourceAttribute{
+			Group:    monitoring.GroupName,
+			Version:  monitoringv1.Version,
+			Resource: fmt.Sprintf("%s/status", monitoringv1.ThanosRulerName),
+			Verbs:    []string{"update"},
+		},
+	)
 	if err != nil {
-		level.Error(logger).Log("msg", "instantiating thanos controller failed", "err", err)
+		level.Error(logger).Log("msg", "failed to check ThanosRuler support", "err", err)
 		cancel()
 		return 1
+	}
+
+	var to *thanoscontroller.Operator
+	if thanosRulerSupported {
+		to, err = thanoscontroller.New(ctx, restConfig, cfg, logger, r, canReadStorageClass, eventRecorderFactory)
+		if err != nil {
+			level.Error(logger).Log("msg", "instantiating thanos controller failed", "err", err)
+			cancel()
+			return 1
+		}
 	}
 
 	var kec *kubelet.Controller
@@ -349,11 +441,18 @@ func run(fs *flag.FlagSet) int {
 			kubeletSelector,
 			cfg.Annotations,
 			cfg.Labels,
+			nodeAddressPriority,
 		); err != nil {
 			level.Error(logger).Log("msg", "instantiating kubelet endpoints controller failed", "err", err)
 			cancel()
 			return 1
 		}
+	}
+
+	if po == nil && pao == nil && ao == nil && to == nil && kec == nil {
+		level.Error(logger).Log("msg", "no controller can be started, check the RBAC permissions of the service account")
+		cancel()
+		return 1
 	}
 
 	// Setup the web server.
@@ -365,7 +464,7 @@ func run(fs *flag.FlagSet) int {
 	r.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		version.NewCollector("prometheus_operator"),
+		versioncollector.NewCollector("prometheus_operator"),
 	)
 
 	mux.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
@@ -389,12 +488,18 @@ func run(fs *flag.FlagSet) int {
 	wg.Go(func() error { return srv.Serve(ctx) })
 
 	// Start the controllers.
-	wg.Go(func() error { return po.Run(ctx) })
+	if po != nil {
+		wg.Go(func() error { return po.Run(ctx) })
+	}
 	if pao != nil {
 		wg.Go(func() error { return pao.Run(ctx) })
 	}
-	wg.Go(func() error { return ao.Run(ctx) })
-	wg.Go(func() error { return to.Run(ctx) })
+	if ao != nil {
+		wg.Go(func() error { return ao.Run(ctx) })
+	}
+	if to != nil {
+		wg.Go(func() error { return to.Run(ctx) })
+	}
 	if kec != nil {
 		wg.Go(func() error { return kec.Run(ctx) })
 	}
