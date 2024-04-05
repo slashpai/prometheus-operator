@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -120,7 +121,7 @@ func (rs *ResourceSelector) SelectServiceMonitors(ctx context.Context, listFn Li
 	res := make(map[string]*monitoringv1.ServiceMonitor, len(serviceMonitors))
 	for namespaceAndName, sm := range serviceMonitors {
 		var err error
-		rejectFn := func(serviceMonitor *monitoringv1.ServiceMonitor, err error) {
+		rejectFn := func(sm *monitoringv1.ServiceMonitor, err error) {
 			rejected++
 			level.Warn(rs.l).Log(
 				"msg", "skipping servicemonitor",
@@ -185,6 +186,11 @@ func (rs *ResourceSelector) SelectServiceMonitors(ctx context.Context, listFn Li
 				rejectFn(sm, fmt.Errorf("metricRelabelConfigs: %w", err))
 				break
 			}
+
+			if err = validateProxyURL(endpoint.ProxyURL); err != nil {
+				rejectFn(sm, fmt.Errorf("proxyURL: %w", err))
+				break
+			}
 		}
 
 		if err != nil {
@@ -192,7 +198,7 @@ func (rs *ResourceSelector) SelectServiceMonitors(ctx context.Context, listFn Li
 		}
 
 		if err = validateScrapeClass(rs.p, sm.Spec.ScrapeClassName); err != nil {
-			rejectFn(sm, fmt.Errorf("scrapeClass: %w", err))
+			rejectFn(sm, err)
 			continue
 		}
 
@@ -313,8 +319,8 @@ func validateRelabelConfig(p monitoringv1.PrometheusInterface, rc monitoringv1.R
 		if !(rc.Regex == "" || rc.Regex == relabel.DefaultRelabelConfig.Regex.String()) ||
 			!(rc.Modulus == uint64(0) ||
 				rc.Modulus == relabel.DefaultRelabelConfig.Modulus) ||
-			!(rc.Separator == "" ||
-				rc.Separator == relabel.DefaultRelabelConfig.Separator) ||
+			!(rc.Separator == nil ||
+				*rc.Separator == relabel.DefaultRelabelConfig.Separator) ||
 			!(rc.Replacement == relabel.DefaultRelabelConfig.Replacement ||
 				rc.Replacement == "") {
 			return fmt.Errorf("%s action requires only 'source_labels' and `target_label`, and no other fields", rc.Action)
@@ -327,8 +333,8 @@ func validateRelabelConfig(p monitoringv1.PrometheusInterface, rc monitoringv1.R
 				rc.TargetLabel == relabel.DefaultRelabelConfig.TargetLabel) ||
 			!(rc.Modulus == uint64(0) ||
 				rc.Modulus == relabel.DefaultRelabelConfig.Modulus) ||
-			!(rc.Separator == "" ||
-				rc.Separator == relabel.DefaultRelabelConfig.Separator) ||
+			!(rc.Separator == nil ||
+				*rc.Separator == relabel.DefaultRelabelConfig.Separator) ||
 			!(rc.Replacement == relabel.DefaultRelabelConfig.Replacement ||
 				rc.Replacement == "") {
 			return fmt.Errorf("%s action requires only 'regex', and no other fields", rc.Action)
@@ -404,7 +410,7 @@ func (rs *ResourceSelector) SelectPodMonitors(ctx context.Context, listFn ListAl
 	res := make(map[string]*monitoringv1.PodMonitor, len(podMonitors))
 	for namespaceAndName, pm := range podMonitors {
 		var err error
-		rejectFn := func(podmonitor *monitoringv1.PodMonitor, err error) {
+		rejectFn := func(pm *monitoringv1.PodMonitor, err error) {
 			rejected++
 			level.Warn(rs.l).Log(
 				"msg", "skipping podmonitor",
@@ -431,7 +437,7 @@ func (rs *ResourceSelector) SelectPodMonitors(ctx context.Context, listFn ListAl
 			}
 
 			if endpoint.TLSConfig != nil {
-				if err = rs.store.AddSafeTLSConfig(ctx, pm.GetNamespace(), &endpoint.TLSConfig.SafeTLSConfig); err != nil {
+				if err = rs.store.AddSafeTLSConfig(ctx, pm.GetNamespace(), endpoint.TLSConfig); err != nil {
 					rejectFn(pm, err)
 					break
 				}
@@ -460,6 +466,11 @@ func (rs *ResourceSelector) SelectPodMonitors(ctx context.Context, listFn ListAl
 
 			if err = validateRelabelConfigs(rs.p, endpoint.MetricRelabelConfigs); err != nil {
 				rejectFn(pm, fmt.Errorf("metricRelabelConfigs: %w", err))
+				break
+			}
+
+			if err = validateProxyURL(endpoint.ProxyURL); err != nil {
+				rejectFn(pm, fmt.Errorf("proxyURL: %w", err))
 				break
 			}
 		}
@@ -576,7 +587,7 @@ func (rs *ResourceSelector) SelectProbes(ctx context.Context, listFn ListAllByNa
 		}
 
 		if probe.Spec.TLSConfig != nil {
-			if err = rs.store.AddSafeTLSConfig(ctx, probe.GetNamespace(), &probe.Spec.TLSConfig.SafeTLSConfig); err != nil {
+			if err = rs.store.AddSafeTLSConfig(ctx, probe.GetNamespace(), probe.Spec.TLSConfig); err != nil {
 				rejectFn(probe, err)
 				continue
 			}
@@ -619,6 +630,11 @@ func (rs *ResourceSelector) SelectProbes(ctx context.Context, listFn ListAllByNa
 			}
 		}
 
+		if err = validateProxyURL(&probe.Spec.ProberSpec.ProxyURL); err != nil {
+			rejectFn(probe, fmt.Errorf("proxyURL: %w", err))
+			continue
+		}
+
 		if err = validateProberURL(probe.Spec.ProberSpec.URL); err != nil {
 			err := fmt.Errorf("%s url specified in proberSpec is invalid, it should be of the format `hostname` or `hostname:port`: %w", probe.Spec.ProberSpec.URL, err)
 			rejectFn(probe, err)
@@ -642,6 +658,15 @@ func (rs *ResourceSelector) SelectProbes(ctx context.Context, listFn ListAllByNa
 	return res, nil
 }
 
+func validateProxyURL(proxyurl *string) error {
+	if proxyurl == nil {
+		return nil
+	}
+
+	_, err := url.Parse(*proxyurl)
+	return err
+}
+
 func validateProberURL(url string) error {
 	hostPort := strings.Split(url, ":")
 
@@ -654,6 +679,18 @@ func validateProberURL(url string) error {
 		if !govalidator.IsPort(hostPort[1]) {
 			return fmt.Errorf("invalid port: %q", hostPort[1])
 		}
+	}
+	return nil
+}
+
+func validateServer(server string) error {
+	parsedURL, err := url.Parse(server)
+	if err != nil {
+		return fmt.Errorf("cannot parse server: %s", err.Error())
+	}
+
+	if len(parsedURL.Scheme) == 0 || len(parsedURL.Host) == 0 {
+		return fmt.Errorf("must not be empty and have a scheme: %s", server)
 	}
 	return nil
 }
@@ -762,11 +799,10 @@ func (rs *ResourceSelector) SelectScrapeConfigs(ctx context.Context, listFn List
 			rejectFn(sc, err)
 			continue
 		}
-		if sc.Spec.ProxyConfig != nil {
-			if err = validateProxyConfig(ctx, sc.Spec.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
-				rejectFn(sc, err)
-				continue
-			}
+
+		if err = validateProxyConfig(ctx, sc.Spec.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			rejectFn(sc, err)
+			continue
 		}
 
 		if err = validateRelabelConfigs(rs.p, sc.Spec.MetricRelabelConfigs); err != nil {
@@ -813,6 +849,25 @@ func (rs *ResourceSelector) SelectScrapeConfigs(ctx context.Context, listFn List
 			rejectFn(sc, fmt.Errorf("digitalOceanSDConfigs: %w", err))
 			continue
 		}
+
+		if err = rs.validateKumaSDConfigs(ctx, sc); err != nil {
+			rejectFn(sc, fmt.Errorf("kumaSDConfigs: %w", err))
+			continue
+		}
+
+		if err = rs.validateEurekaSDConfigs(ctx, sc); err != nil {
+			rejectFn(sc, fmt.Errorf("eurekaSDConfigs: %w", err))
+			continue
+		}
+
+		if err = rs.validateDockerSDConfigs(ctx, sc); err != nil {
+			rejectFn(sc, fmt.Errorf("dockerSDConfigs: %w", err))
+			continue
+		}
+		if err = rs.validateHetznerSDConfigs(ctx, sc); err != nil {
+			rejectFn(sc, fmt.Errorf("hetznerSDConfigs: %w", err))
+			continue
+		}
 		res[scName] = sc
 	}
 
@@ -836,7 +891,6 @@ func (rs *ResourceSelector) validateKubernetesSDConfigs(ctx context.Context, sc 
 		if err := rs.store.AddBasicAuth(ctx, sc.GetNamespace(), config.BasicAuth, configKey); err != nil {
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
-
 		configAuthKey := fmt.Sprintf("scrapeconfig/auth/%s/%s/kubernetessdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
 		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
 			return fmt.Errorf("[%d]: %w", i, err)
@@ -850,15 +904,41 @@ func (rs *ResourceSelector) validateKubernetesSDConfigs(ctx context.Context, sc 
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
 
-		if config.ProxyConfig != nil {
-			if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
-				return fmt.Errorf("[%d]: %w", i, err)
-			}
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
 		}
 
 		if config.APIServer != nil && config.Namespaces != nil {
 			if ptr.Deref(config.Namespaces.IncludeOwnNamespace, false) {
 				return fmt.Errorf("[%d]: %w", i, errors.New("cannot use 'apiServer' and 'namespaces.ownNamespace' simultaneously"))
+			}
+		}
+
+		allowedSelectors := map[string][]string{
+			monitoringv1.RolePod:           {string(monitoringv1.RolePod)},
+			monitoringv1.RoleService:       {string(monitoringv1.RoleService)},
+			monitoringv1.RoleEndpointSlice: {string(monitoringv1.RolePod), string(monitoringv1.RoleService), string(monitoringv1.RoleEndpointSlice)},
+			monitoringv1.RoleEndpoint:      {string(monitoringv1.RolePod), string(monitoringv1.RoleService), string(monitoringv1.RoleEndpoint)},
+			monitoringv1.RoleNode:          {string(monitoringv1.RoleNode)},
+			monitoringv1.RoleIngress:       {string(monitoringv1.RoleIngress)},
+		}
+
+		for _, s := range config.Selectors {
+			configRole := strings.ToLower(string(config.Role))
+			if _, ok := allowedSelectors[configRole]; !ok {
+				return fmt.Errorf("[%d]: invalid role: %q, expecting one of: pod, service, endpoints, endpointslice, node or ingress", i, s.Role)
+			}
+
+			var allowed bool
+
+			for _, role := range allowedSelectors[configRole] {
+				if role == strings.ToLower(string(s.Role)) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("[%d] : %s role supports only %s selectors", i, config.Role, strings.Join(allowedSelectors[configRole], ", "))
 			}
 		}
 
@@ -897,10 +977,8 @@ func (rs *ResourceSelector) validateConsulSDConfigs(ctx context.Context, sc *mon
 			}
 		}
 
-		if config.ProxyConfig != nil {
-			if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
-				return fmt.Errorf("[%d]: %w", i, err)
-			}
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
 		}
 	}
 	return nil
@@ -922,10 +1000,8 @@ func (rs *ResourceSelector) validateHTTPSDConfigs(ctx context.Context, sc *monit
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
 
-		if config.ProxyConfig != nil {
-			if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
-				return fmt.Errorf("[%d]: %w", i, err)
-			}
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
 		}
 	}
 
@@ -1009,8 +1085,66 @@ func (rs *ResourceSelector) validateDigitalOceanSDConfigs(ctx context.Context, s
 		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
-
 		configKey := fmt.Sprintf("scrapeconfig/%s/%s/digitaloceansdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddOAuth2(ctx, sc.GetNamespace(), config.OAuth2, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+		if err := rs.store.AddSafeTLSConfig(ctx, sc.GetNamespace(), config.TLSConfig); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (rs *ResourceSelector) validateDockerSDConfigs(ctx context.Context, sc *monitoringv1alpha1.ScrapeConfig) error {
+	for i, config := range sc.Spec.DockerSDConfigs {
+		configKey := fmt.Sprintf("scrapeconfig/%s/%s/dockersdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddBasicAuth(ctx, sc.GetNamespace(), config.BasicAuth, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+		configAuthKey := fmt.Sprintf("scrapeconfig/auth/%s/%s/dockersdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		configOAuthKey := fmt.Sprintf("scrapeconfig/%s/%s/dockersdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddOAuth2(ctx, sc.GetNamespace(), config.OAuth2, configOAuthKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := rs.store.AddSafeTLSConfig(ctx, sc.GetNamespace(), config.TLSConfig); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		// Validate the host daemon address url
+		if _, err := url.Parse(config.Host); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+func (rs *ResourceSelector) validateKumaSDConfigs(ctx context.Context, sc *monitoringv1alpha1.ScrapeConfig) error {
+	for i, config := range sc.Spec.KumaSDConfigs {
+		if err := validateServer(config.Server); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		configAuthKey := fmt.Sprintf("scrapeconfig/auth/%s/%s/kumasdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		configKey := fmt.Sprintf("scrapeconfig/%s/%s/kumasdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
 		if err := rs.store.AddOAuth2(ctx, sc.GetNamespace(), config.OAuth2, configKey); err != nil {
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
@@ -1019,12 +1153,65 @@ func (rs *ResourceSelector) validateDigitalOceanSDConfigs(ctx context.Context, s
 			return fmt.Errorf("[%d]: %w", i, err)
 		}
 
-		if config.ProxyConfig != nil {
-			if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
-				return fmt.Errorf("[%d]: %w", i, err)
-			}
+		if err := rs.store.AddBasicAuth(ctx, sc.GetNamespace(), config.BasicAuth, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
 		}
 	}
+	return nil
+}
 
+func (rs *ResourceSelector) validateEurekaSDConfigs(ctx context.Context, sc *monitoringv1alpha1.ScrapeConfig) error {
+	for i, config := range sc.Spec.EurekaSDConfigs {
+		configAuthKey := fmt.Sprintf("scrapeconfig/auth/%s/%s/eurekasdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		configKey := fmt.Sprintf("scrapeconfig/%s/%s/eurekasdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddOAuth2(ctx, sc.GetNamespace(), config.OAuth2, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := rs.store.AddSafeTLSConfig(ctx, sc.GetNamespace(), config.TLSConfig); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := rs.store.AddBasicAuth(ctx, sc.GetNamespace(), config.BasicAuth, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+func (rs *ResourceSelector) validateHetznerSDConfigs(ctx context.Context, sc *monitoringv1alpha1.ScrapeConfig) error {
+	for i, config := range sc.Spec.HetznerSDConfigs {
+		configKey := fmt.Sprintf("scrapeconfig/%s/%s/hetznersdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddBasicAuth(ctx, sc.GetNamespace(), config.BasicAuth, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		configAuthKey := fmt.Sprintf("scrapeconfig/auth/%s/%s/hetznersdconfig/%d", sc.GetNamespace(), sc.GetName(), i)
+		if err := rs.store.AddSafeAuthorizationCredentials(ctx, sc.GetNamespace(), config.Authorization, configAuthKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+		if err := rs.store.AddOAuth2(ctx, sc.GetNamespace(), config.OAuth2, configKey); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+
+		if err := rs.store.AddSafeTLSConfig(ctx, sc.GetNamespace(), config.TLSConfig); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+		if err := validateProxyConfig(ctx, config.ProxyConfig, rs.store, sc.GetNamespace()); err != nil {
+			return fmt.Errorf("[%d]: %w", i, err)
+		}
+	}
 	return nil
 }
