@@ -190,3 +190,5 @@ kubectl get pods --all-namespaces | grep 'prom.*operator'
 ```
 
 Check the logs of the matching pods to see if they manage the same resource.
+
+## Testing updated github actions to skip unit and e2e tests for markdown updates
