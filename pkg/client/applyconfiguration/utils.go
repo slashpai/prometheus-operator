@@ -63,6 +63,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1.AzureADApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("AzureOAuth"):
 		return &monitoringv1.AzureOAuthApplyConfiguration{}
+	case v1.SchemeGroupVersion.WithKind("AzureSDK"):
+		return &monitoringv1.AzureSDKApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("BasicAuth"):
 		return &monitoringv1.BasicAuthApplyConfiguration{}
 	case v1.SchemeGroupVersion.WithKind("CommonPrometheusFields"):
@@ -253,6 +255,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.MuteTimeIntervalApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceDiscovery"):
 		return &monitoringv1alpha1.NamespaceDiscoveryApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NomadSDConfig"):
+		return &monitoringv1alpha1.NomadSDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OpenStackSDConfig"):
 		return &monitoringv1alpha1.OpenStackSDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OpsGenieConfig"):
