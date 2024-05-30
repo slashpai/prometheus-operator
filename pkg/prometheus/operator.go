@@ -127,12 +127,20 @@ func ValidateRemoteWriteSpec(spec monitoringv1.RemoteWriteSpec) error {
 	}
 
 	if spec.AzureAD != nil {
-		if spec.AzureAD.ManagedIdentity == nil && spec.AzureAD.OAuth == nil {
-			return fmt.Errorf("must provide Azure Managed Identity or Azure OAuth in the Azure AD config")
+		if spec.AzureAD.ManagedIdentity == nil && spec.AzureAD.OAuth == nil && spec.AzureAD.SDK == nil {
+			return fmt.Errorf("must provide Azure Managed Identity or Azure OAuth or Azure SDK in the Azure AD config")
 		}
 
 		if spec.AzureAD.ManagedIdentity != nil && spec.AzureAD.OAuth != nil {
 			return fmt.Errorf("cannot provide both Azure Managed Identity and Azure OAuth in the Azure AD config")
+		}
+
+		if spec.AzureAD.OAuth != nil && spec.AzureAD.SDK != nil {
+			return fmt.Errorf("cannot provide both Azure OAuth and Azure SDK in the Azure AD config")
+		}
+
+		if spec.AzureAD.ManagedIdentity != nil && spec.AzureAD.SDK != nil {
+			return fmt.Errorf("cannot provide both Azure Managed Identity and Azure SDK in the Azure AD config")
 		}
 
 		if spec.AzureAD.OAuth != nil {
@@ -146,7 +154,7 @@ func ValidateRemoteWriteSpec(spec monitoringv1.RemoteWriteSpec) error {
 	return nil
 }
 
-func ValidateAlertmanagerEndpoints(am monitoringv1.AlertmanagerEndpoints) error {
+func ValidateAlertmanagerEndpoints(am monitoringv1.AlertmanagerEndpoints, p *monitoringv1.Prometheus) error {
 	var nonNilFields []string
 
 	//nolint:staticcheck // Ignore SA1019 this field is marked as deprecated.
@@ -167,6 +175,14 @@ func ValidateAlertmanagerEndpoints(am monitoringv1.AlertmanagerEndpoints) error 
 
 	if len(nonNilFields) > 1 {
 		return fmt.Errorf("%s can't be set at the same time, at most one of them must be defined", strings.Join(nonNilFields, " and "))
+	}
+
+	if err := validateRelabelConfigs(p, am.RelabelConfigs); err != nil {
+		return fmt.Errorf("invalid relabelings: %w", err)
+	}
+
+	if err := validateRelabelConfigs(p, am.AlertRelabelConfigs); err != nil {
+		return fmt.Errorf("invalid alertRelabelings: %w", err)
 	}
 
 	return nil
