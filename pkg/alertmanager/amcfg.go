@@ -1033,7 +1033,7 @@ func (cb *configBuilder) convertEmailConfig(ctx context.Context, in monitoringv1
 	}
 
 	if in.Smarthost == "" && cb.cfg.Global.SMTPSmarthost.Host == "" {
-		return nil, fmt.Errorf("smtp_smarthost is a mandatory field")
+		return nil, fmt.Errorf("smarthost is a mandatory field")
 	}
 
 	if in.Smarthost != "" {
