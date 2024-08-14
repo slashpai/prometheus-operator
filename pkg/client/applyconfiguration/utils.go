@@ -215,16 +215,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.DiscordConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DNSSDConfig"):
 		return &monitoringv1alpha1.DNSSDConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("DockerFilter"):
-		return &monitoringv1alpha1.DockerFilterApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DockerSDConfig"):
 		return &monitoringv1alpha1.DockerSDConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("DockerSwarmFilter"):
-		return &monitoringv1alpha1.DockerSwarmFilterApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DockerSwarmSDConfig"):
 		return &monitoringv1alpha1.DockerSwarmSDConfigApplyConfiguration{}
-	case v1alpha1.SchemeGroupVersion.WithKind("EC2Filter"):
-		return &monitoringv1alpha1.EC2FilterApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EC2SDConfig"):
 		return &monitoringv1alpha1.EC2SDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("EmailConfig"):
@@ -233,6 +227,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.EurekaSDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("FileSDConfig"):
 		return &monitoringv1alpha1.FileSDConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("Filter"):
+		return &monitoringv1alpha1.FilterApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("GCESDConfig"):
 		return &monitoringv1alpha1.GCESDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HetznerSDConfig"):
@@ -291,6 +287,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &monitoringv1alpha1.ReceiverApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Route"):
 		return &monitoringv1alpha1.RouteApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ScalewaySDConfig"):
+		return &monitoringv1alpha1.ScalewaySDConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ScrapeConfig"):
 		return &monitoringv1alpha1.ScrapeConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ScrapeConfigSpec"):

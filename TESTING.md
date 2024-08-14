@@ -1,3 +1,15 @@
+---
+weight: 502
+toc: true
+title: Testing
+menu:
+    docs:
+        parent: community
+lead: ""
+images: []
+draft: false
+---
+
 When contributing code to Prometheus-Operator, you'll notice that every Pull Request will run against an extensive test suite. Among an extensive list of benefits that tests brings to the Project's overall health and reliability, it can be the reviewer's and contributors's best friend during development:
 
 * Test cases serve as documentation, providing insights into the expected behavior of the software.
@@ -116,6 +128,7 @@ The following Makefile targets can run specific end-to-end tests:
 * `make test-e2e-prometheus-all-namespaces` - Will run regular Prometheus tests.
 * `make test-e2e-operator-upgrade` - Will validate that a monitoring stack managed by the previous version of Prometheus-Operator will continue to work after an upgrade to the current version.
 * `make test-e2e-prometheus-upgrade` - Will validate that a series of Prometheus versions can be sequentially upgraded.
+* `make test-e2e-feature-gates` - Will validate the features behind a gate.
 
 ### Running only one end-to-end test
 

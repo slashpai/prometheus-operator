@@ -138,6 +138,16 @@ func (s *StoreBuilder) AddOAuth2(ctx context.Context, ns string, oauth2 *monitor
 		return fmt.Errorf("failed to get oauth2 client secret: %w", err)
 	}
 
+	err = s.AddProxyConfig(ctx, ns, oauth2.ProxyConfig)
+	if err != nil {
+		return fmt.Errorf("failed to get oauth2 proxyConfig: %w", err)
+	}
+
+	err = s.AddSafeTLSConfig(ctx, ns, oauth2.TLSConfig)
+	if err != nil {
+		return fmt.Errorf("failed to get oauth2 tlsConfig: %w", err)
+	}
+
 	return nil
 }
 
@@ -367,4 +377,19 @@ func (cos *cacheOnlyStore) GetSecretOrConfigMapKey(key monitoringv1.SecretOrConf
 	default:
 		return "", nil
 	}
+}
+
+func (cos *cacheOnlyStore) TLSAsset(sel interface{}) string {
+	var k tlsAssetKey
+
+	switch v := sel.(type) {
+	case monitoringv1.SecretOrConfigMap:
+		k = tlsAssetKeyFromSelector(cos.ns, v)
+	case *v1.SecretKeySelector:
+		k = tlsAssetKeyFromSecretSelector(cos.ns, v)
+	default:
+		return ""
+	}
+
+	return k.toString()
 }
