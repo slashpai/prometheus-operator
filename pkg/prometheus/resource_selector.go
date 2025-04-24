@@ -674,7 +674,7 @@ func (rs *ResourceSelector) SelectProbes(ctx context.Context, listFn ListAllByNa
 			}
 		}
 
-		if err = validateProxyURL(&probe.Spec.ProberSpec.ProxyURL); err != nil {
+		if err = validateProxyURL(probe.Spec.ProberSpec.ProxyURL); err != nil {
 			rejectFn(probe, fmt.Errorf("proxyURL: %w", err))
 			continue
 		}

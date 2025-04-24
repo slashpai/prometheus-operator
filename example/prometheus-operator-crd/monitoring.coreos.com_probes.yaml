@@ -681,6 +681,8 @@ spec:
                     type: string
                   url:
                     description: Mandatory URL of the prober.
+                    minLength: 1
+                    pattern: ^http(s)?://.+$
                     type: string
                 required:
                 - url
