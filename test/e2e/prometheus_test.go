@@ -5495,6 +5495,280 @@ func testPrometheusReconciliationOnSecretChanges(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func verifyPrometheusConfig(ns, promName, expectedConfig string) (bool, error) {
+	pods, err := framework.KubeClient.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("prometheus=%s", promName),
+	})
+	if err != nil {
+		return false, err
+	}
+
+	if len(pods.Items) == 0 {
+		return false, fmt.Errorf("no prometheus pods found")
+	}
+
+	pod := pods.Items[0]
+	stdout, _, err := framework.ExecWithOptions(context.Background(), testFramework.ExecOptions{
+		Command: []string{
+			"/bin/sh", "-c", "cat /etc/prometheus/config_out/prometheus.env.yaml",
+		},
+		Namespace:     ns,
+		PodName:       pod.Name,
+		ContainerName: "prometheus",
+		CaptureStdout: true,
+		CaptureStderr: true,
+		Stdin:         nil,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return strings.Contains(stdout, expectedConfig), nil
+}
+
+func testPrometheusUTF8LabelSupport(t *testing.T) {
+	skipPrometheusTests(t)
+	t.Parallel()
+
+	testCtx := framework.NewTestCtx(t)
+	defer testCtx.Cleanup(t)
+	ns := framework.CreateNamespace(context.Background(), t, testCtx)
+	framework.SetupPrometheusRBAC(context.Background(), t, testCtx, ns)
+
+	_, err := framework.CreateOrUpdatePrometheusOperator(
+		context.Background(),
+		ns,
+		[]string{ns},
+		nil,
+		[]string{ns},
+		nil,
+		false,
+		true,
+		true,
+	)
+	require.NoError(t, err)
+
+	t.Run("UTF8RelabelConfigWithPrometheus3", func(t *testing.T) {
+		testUTF8RelabelConfigWithPrometheus3(t, ns)
+	})
+
+	t.Run("UTF8RelabelConfigWithPrometheus2", func(t *testing.T) {
+		testUTF8RelabelConfigWithPrometheus2(t, ns)
+	})
+
+	t.Run("UTF8ServiceMonitorLabelsWithPrometheus3", func(t *testing.T) {
+		testUTF8ServiceMonitorLabelsWithPrometheus3(t, ns)
+	})
+}
+
+func testUTF8RelabelConfigWithPrometheus3(t *testing.T, ns string) {
+	name := "prometheus-utf8-relabel"
+
+	prom := framework.MakeBasicPrometheus(ns, name, "test-app", 1)
+	prom.Spec.Version = operator.DefaultPrometheusVersion
+
+	_, err := framework.CreatePrometheusAndWaitUntilReady(context.Background(), ns, prom)
+	require.NoError(t, err)
+
+	service := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service",
+			Namespace: ns,
+			Labels:    map[string]string{"group": "test-app"},
+		},
+		Spec: v1.ServiceSpec{
+			Ports: []v1.ServicePort{
+				{
+					Name: "metrics",
+					Port: 8080,
+				},
+			},
+			Selector: map[string]string{"app": "test"},
+		},
+	}
+	_, err = framework.KubeClient.CoreV1().Services(ns).Create(context.Background(), service, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	sm := &monitoringv1.ServiceMonitor{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "utf8-relabel-test",
+			Namespace: ns,
+			Labels:    map[string]string{"group": "test-app"},
+		},
+		Spec: monitoringv1.ServiceMonitorSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"group": "test-app"},
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Interval: "30s",
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__name__"},
+							TargetLabel:  "服务",
+							Replacement:  ptr.To("测试服务"),
+							Action:       "replace",
+						},
+					},
+					MetricRelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"job"},
+							TargetLabel:  "环境",
+							Replacement:  ptr.To("生产环境"),
+							Action:       "replace",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = framework.MonClientV1.ServiceMonitors(ns).Create(context.Background(), sm, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Verify that UTF-8 labels appear in the config with Prometheus 3.0+
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		configOk1, _ := verifyPrometheusConfig(ns, name, "服务")
+		configOk2, _ := verifyPrometheusConfig(ns, name, "环境")
+		return configOk1 && configOk2, nil
+	})
+	require.NoError(t, err, "expected UTF-8 relabel labels to be present in Prometheus config with version 3.0+")
+}
+
+func testUTF8RelabelConfigWithPrometheus2(t *testing.T, ns string) {
+	name := "prometheus-legacy-relabel"
+
+	prom := framework.MakeBasicPrometheus(ns, name, "test-app", 1)
+	prom.Spec.Version = operator.DefaultPrometheusV2
+
+	_, err := framework.CreatePrometheusAndWaitUntilReady(context.Background(), ns, prom)
+	require.NoError(t, err)
+
+	service := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service-legacy",
+			Namespace: ns,
+			Labels:    map[string]string{"group": "test-app"},
+		},
+		Spec: v1.ServiceSpec{
+			Ports: []v1.ServicePort{
+				{
+					Name: "metrics",
+					Port: 8080,
+				},
+			},
+			Selector: map[string]string{"app": "test"},
+		},
+	}
+	_, err = framework.KubeClient.CoreV1().Services(ns).Create(context.Background(), service, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	sm := &monitoringv1.ServiceMonitor{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "legacy-relabel-test",
+			Namespace: ns,
+			Labels:    map[string]string{"group": "test-app"},
+		},
+		Spec: monitoringv1.ServiceMonitorSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"group": "test-app"},
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Interval: "30s",
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__name__"},
+							TargetLabel:  "测试服务",
+							Replacement:  ptr.To("prometheus"),
+							Action:       "replace",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = framework.MonClientV1.ServiceMonitors(ns).Create(context.Background(), sm, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Verify that UTF-8 labels do NOT appear in the config with Prometheus 2.x
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 1*time.Minute, false, func(ctx context.Context) (bool, error) {
+		hasUTF8, _ := verifyPrometheusConfig(ns, name, "测试服务")
+		return !hasUTF8, nil
+	})
+	require.NoError(t, err, "expected UTF-8 labels to be rejected and not appear in Prometheus config with version 2.x")
+}
+
+func testUTF8ServiceMonitorLabelsWithPrometheus3(t *testing.T, ns string) {
+	name := "prometheus-utf8-sm-labels"
+
+	prom := framework.MakeBasicPrometheus(ns, name, "test-app", 1)
+	prom.Spec.Version = operator.DefaultPrometheusVersion
+
+	_, err := framework.CreatePrometheusAndWaitUntilReady(context.Background(), ns, prom)
+	require.NoError(t, err)
+
+	service := &v1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service-utf8",
+			Namespace: ns,
+			Labels: map[string]string{
+				"group": "test-app",
+				"测试标签":  "utf8-value",
+			},
+		},
+		Spec: v1.ServiceSpec{
+			Ports: []v1.ServicePort{
+				{
+					Name: "metrics",
+					Port: 8080,
+				},
+			},
+			Selector: map[string]string{"app": "test"},
+		},
+	}
+	_, err = framework.KubeClient.CoreV1().Services(ns).Create(context.Background(), service, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	sm := &monitoringv1.ServiceMonitor{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "utf8-labels-test",
+			Namespace: ns,
+			Labels:    map[string]string{"group": "test-app"},
+		},
+		Spec: monitoringv1.ServiceMonitorSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"group": "test-app"},
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "metrics",
+					Interval: "30s",
+					RelabelConfigs: []monitoringv1.RelabelConfig{
+						{
+							SourceLabels: []monitoringv1.LabelName{"__meta_kubernetes_service_label_测试标签"},
+							TargetLabel:  "service_utf8_label",
+							Action:       "replace",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err = framework.MonClientV1.ServiceMonitors(ns).Create(context.Background(), sm, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	err = wait.PollUntilContextTimeout(context.Background(), time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+		configOk, _ := verifyPrometheusConfig(ns, name, "测试标签")
+		return configOk, nil
+	})
+	require.NoError(t, err, "expected UTF-8 service labels to be handled properly in Prometheus config with version 3.0+")
+}
+
 func isAlertmanagerDiscoveryWorking(ns, promSVCName, alertmanagerName string) func(ctx context.Context) (bool, error) {
 	return func(ctx context.Context) (bool, error) {
 		pods, err := framework.KubeClient.CoreV1().Pods(ns).List(

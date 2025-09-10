@@ -36,15 +36,6 @@ import (
 	namespacelabeler "github.com/prometheus-operator/prometheus-operator/pkg/namespacelabeler"
 )
 
-func init() {
-	// For now, the operator only supports legacy label names.
-	// Eventually the operator should support UTF-8 label names too and the
-	// issue is tracked by
-	// https://github.com/prometheus-operator/prometheus-operator/issues/7362
-	// nolint:staticcheck
-	model.NameValidationScheme = model.LegacyValidation
-}
-
 type RuleConfigurationFormat int
 
 const (
@@ -59,18 +50,24 @@ const (
 var MaxConfigMapDataSize = int(float64(v1.MaxSecretSize) * 0.5)
 
 type PrometheusRuleSelector struct {
-	ruleFormat   RuleConfigurationFormat
-	version      semver.Version
-	ruleSelector labels.Selector
-	nsLabeler    *namespacelabeler.Labeler
-	ruleInformer *informers.ForResource
-
+	ruleFormat    RuleConfigurationFormat
+	version       semver.Version
+	ruleSelector  labels.Selector
+	nsLabeler     *namespacelabeler.Labeler
+	ruleInformer  *informers.ForResource
 	eventRecorder record.EventRecorder
-
-	logger *slog.Logger
+	logger        *slog.Logger
 }
 
-func NewPrometheusRuleSelector(ruleFormat RuleConfigurationFormat, version string, labelSelector *metav1.LabelSelector, nsLabeler *namespacelabeler.Labeler, ruleInformer *informers.ForResource, eventRecorder record.EventRecorder, logger *slog.Logger) (*PrometheusRuleSelector, error) {
+func NewPrometheusRuleSelector(
+	ruleFormat RuleConfigurationFormat,
+	version string,
+	labelSelector *metav1.LabelSelector,
+	nsLabeler *namespacelabeler.Labeler,
+	ruleInformer *informers.ForResource,
+	eventRecorder record.EventRecorder,
+	logger *slog.Logger,
+) (*PrometheusRuleSelector, error) {
 	componentVersion, err := semver.ParseTolerant(version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse version: %w", err)
@@ -103,7 +100,14 @@ func (prs *PrometheusRuleSelector) generateRulesConfiguration(promRule *monitori
 		return "", fmt.Errorf("failed to marshal content: %w", err)
 	}
 
-	errs := ValidateRule(promRuleSpec)
+	var validationScheme model.ValidationScheme
+	if prs.ruleFormat == ThanosFormat {
+		validationScheme = ValidationSchemeForThanos(prs.version)
+	} else {
+		validationScheme = ValidationSchemeForPrometheus(prs.version)
+	}
+
+	errs := ValidateRule(promRuleSpec, validationScheme)
 	if len(errs) != 0 {
 		const m = "invalid rule"
 		logger.Debug(m, "content", content)
@@ -165,7 +169,7 @@ func (prs *PrometheusRuleSelector) sanitizePrometheusRulesSpec(promRuleSpec moni
 }
 
 // ValidateRule takes PrometheusRuleSpec and validates it using the upstream prometheus rule validator.
-func ValidateRule(promRuleSpec monitoringv1.PrometheusRuleSpec) []error {
+func ValidateRule(promRuleSpec monitoringv1.PrometheusRuleSpec, validationScheme model.ValidationScheme) []error {
 	for i := range promRuleSpec.Groups {
 		// The upstream Prometheus rule validator doesn't support the
 		// partial_response_strategy field.
@@ -195,7 +199,7 @@ func ValidateRule(promRuleSpec monitoringv1.PrometheusRuleSpec) []error {
 		return []error{fmt.Errorf("the length of rendered Prometheus Rule is %d bytes which is above the maximum limit of %d bytes", promRuleSize, MaxConfigMapDataSize)}
 	}
 
-	_, errs := rulefmt.Parse(content, false)
+	_, errs := rulefmt.Parse(content, false, validationScheme)
 	return errs
 }
 
