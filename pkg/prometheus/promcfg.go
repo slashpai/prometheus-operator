@@ -709,8 +709,12 @@ func (cg *ConfigGenerator) buildExternalLabels() yaml.MapSlice {
 		prometheusExternalLabelName = *cpf.PrometheusExternalLabelName
 	}
 
-	// Do not add the external label if the resulting value is empty.
+	// Do not add the external label if the resulting value is empty or invalid.
 	if prometheusExternalLabelName != "" {
+		if !cg.isValidExternalLabelName(prometheusExternalLabelName) {
+			cg.logger.Warn("invalid `prometheusExternalLabelName`, using default", "labelName", prometheusExternalLabelName)
+			prometheusExternalLabelName = defaultPrometheusExternalLabelName
+		}
 		m[prometheusExternalLabelName] = fmt.Sprintf("%s/%s", objMeta.GetNamespace(), objMeta.GetName())
 	}
 
@@ -719,8 +723,12 @@ func (cg *ConfigGenerator) buildExternalLabels() yaml.MapSlice {
 		replicaExternalLabelName = *cpf.ReplicaExternalLabelName
 	}
 
-	// Do not add the external label if the resulting value is empty.
+	// Do not add the external label if the resulting value is empty or invalid.
 	if replicaExternalLabelName != "" {
+		if !cg.isValidExternalLabelName(replicaExternalLabelName) {
+			cg.logger.Warn("invalid `replicaExternalLabelName`, using default", "labelName", replicaExternalLabelName)
+			replicaExternalLabelName = defaultReplicaExternalLabelName
+		}
 		m[replicaExternalLabelName] = fmt.Sprintf("$(%s)", operator.PodNameEnvVar)
 	}
 
@@ -729,10 +737,22 @@ func (cg *ConfigGenerator) buildExternalLabels() yaml.MapSlice {
 			cg.logger.Warn("ignoring external label because it is a reserved key", "key", k)
 			continue
 		}
+
+		if !cg.isValidExternalLabelName(k) {
+			cg.logger.Warn("ignoring external label with invalid name", "labelName", k)
+			continue
+		}
+
 		m[k] = v
 	}
 
 	return stringMapToMapSlice(m)
+}
+
+// isValidExternalLabelName validates external label names using version-aware validation
+func (cg *ConfigGenerator) isValidExternalLabelName(labelName string) bool {
+	validationScheme := operator.ValidationSchemeForPrometheus(cg.version)
+	return validationScheme.IsValidLabelName(labelName)
 }
 
 func (cg *ConfigGenerator) addProxyConfigtoYaml(

@@ -5843,3 +5843,113 @@ type prometheusAlertmanagerAPIResponse struct {
 	Status string                 `json:"status"`
 	Data   *alertmanagerDiscovery `json:"data"`
 }
+
+func testPrometheusExternalLabelsValidation(t *testing.T) {
+	skipPrometheusTests(t)
+	t.Parallel()
+
+	testCtx := framework.NewTestCtx(t)
+	defer testCtx.Cleanup(t)
+	ns := framework.CreateNamespace(context.Background(), t, testCtx)
+	framework.SetupPrometheusRBAC(context.Background(), t, testCtx, ns)
+
+	_, err := framework.CreateOrUpdatePrometheusOperator(
+		context.Background(), ns, []string{ns}, nil, []string{ns}, nil, false, true, true)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                    string
+		version                 string
+		externalLabels          map[string]string
+		shouldAppearInConfig    []string
+		shouldNotAppearInConfig []string
+	}{
+		{
+			name:    "valid-labels-v3",
+			version: operator.DefaultPrometheusVersion,
+			externalLabels: map[string]string{
+				"environment":    "production",
+				"cluster_region": "us-west-2",
+			},
+			shouldAppearInConfig: []string{"environment: production", "cluster_region: us-west-2"},
+		},
+		{
+			name:    "invalid-labels-v3",
+			version: operator.DefaultPrometheusVersion,
+			externalLabels: map[string]string{
+				"valid_label":    "test",
+				"some-other-key": "invalid",
+				"another.label":  "invalid",
+			},
+			shouldAppearInConfig:    []string{"valid_label: test"},
+			shouldNotAppearInConfig: []string{"some-other-key", "another.label"},
+		},
+		{
+			name:    "utf8-labels-v3",
+			version: operator.DefaultPrometheusVersion,
+			externalLabels: map[string]string{
+				"环境":         "生产环境",
+				"测试_cluster": "kubernetes",
+			},
+			shouldAppearInConfig: []string{"环境: 生产环境", "测试_cluster: kubernetes"},
+		},
+		{
+			name:    "valid-labels-v2",
+			version: operator.DefaultPrometheusV2,
+			externalLabels: map[string]string{
+				"environment":    "production",
+				"cluster_region": "us-west-2",
+			},
+			shouldAppearInConfig: []string{"environment: production", "cluster_region: us-west-2"},
+		},
+		{
+			name:    "invalid-labels-v2",
+			version: operator.DefaultPrometheusV2,
+			externalLabels: map[string]string{
+				"valid_label":    "test",
+				"some-other-key": "invalid",
+				"another.label":  "invalid",
+			},
+			shouldAppearInConfig:    []string{"valid_label: test"},
+			shouldNotAppearInConfig: []string{"some-other-key", "another.label"},
+		},
+		{
+			name:    "utf8-labels-v2",
+			version: operator.DefaultPrometheusV2,
+			externalLabels: map[string]string{
+				"valid_ascii": "test",
+				"环境":          "生产环境",
+				"测试_cluster":  "kubernetes",
+			},
+			shouldAppearInConfig:    []string{"valid_ascii: test"},
+			shouldNotAppearInConfig: []string{"环境", "测试_cluster"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			promName := "prom-" + tt.name
+			prom := framework.MakeBasicPrometheus(ns, promName, "test-app", 1)
+			prom.Spec.Version = tt.version
+			prom.Spec.ExternalLabels = tt.externalLabels
+
+			_, err := framework.CreatePrometheusAndWaitUntilReady(context.Background(), ns, prom)
+			require.NoError(t, err)
+
+			err = wait.PollUntilContextTimeout(context.Background(), time.Second, 2*time.Minute, false, func(ctx context.Context) (bool, error) {
+				for _, expected := range tt.shouldAppearInConfig {
+					if present, _ := verifyPrometheusConfig(ns, promName, expected); !present {
+						return false, nil
+					}
+				}
+				for _, shouldNotExist := range tt.shouldNotAppearInConfig {
+					if present, _ := verifyPrometheusConfig(ns, promName, shouldNotExist); present {
+						return false, nil
+					}
+				}
+				return true, nil
+			})
+			require.NoError(t, err, "external labels validation failed for %s", tt.name)
+		})
+	}
+}

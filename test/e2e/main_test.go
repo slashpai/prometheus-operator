@@ -321,6 +321,7 @@ func testAllNSPrometheus(t *testing.T) {
 		"PrometheusAgentSSetServiceName":            testPrometheusAgentSSetServiceName,
 		"PrometheusReconciliationOnSecretChanges":   testPrometheusReconciliationOnSecretChanges,
 		"PrometheusUTF8LabelSupport":                testPrometheusUTF8LabelSupport,
+		"PrometheusExternalLabelsValidation":        testPrometheusExternalLabelsValidation,
 	}
 
 	for name, f := range testFuncs {
