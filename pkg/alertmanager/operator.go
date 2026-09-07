@@ -629,6 +629,10 @@ func (c *Operator) sync(ctx context.Context, key string) error {
 		return err
 	}
 
+	if ignored := discardZeroDurations(am); len(ignored) > 0 {
+		c.reconciliations.SetReasonAndMessage(key, operator.IgnoredFieldsReason, ignoredFieldsMessage(ignored))
+	}
+
 	assetStore := assets.NewStoreBuilder(c.kclient.CoreV1(), c.kclient.CoreV1())
 
 	if err := c.provisionAlertmanagerConfiguration(ctx, am, assetStore); err != nil {
