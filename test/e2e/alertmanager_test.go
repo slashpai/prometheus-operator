@@ -2661,13 +2661,6 @@ func testAlertmanagerCRDValidation(t *testing.T) {
 		// Retention Validation:
 		//
 		{
-			name: "zero-time-without-unit",
-			alertmanagerSpec: monitoringv1.AlertmanagerSpec{
-				Replicas:  &replicas,
-				Retention: "0",
-			},
-		},
-		{
 			name: "time-in-hours",
 			alertmanagerSpec: monitoringv1.AlertmanagerSpec{
 				Replicas:  &replicas,
@@ -3042,4 +3035,84 @@ func testAMScaleUpWithoutLabels(t *testing.T) {
 	sts, err := stsClient.Get(ctx, stsName, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.NotEmpty(t, sts.GetLabels(), "expected labels to be restored on the StatefulSet by the operator")
+}
+
+func testAlertmanagerZeroDuration(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(*monitoringv1.Alertmanager)
+	}{
+		{
+			name: "retention",
+			apply: func(am *monitoringv1.Alertmanager) {
+				am.Spec.Retention = "0"
+			},
+		},
+		{
+			name: "clusterGossipInterval",
+			apply: func(am *monitoringv1.Alertmanager) {
+				am.Spec.ClusterGossipInterval = "0s"
+			},
+		},
+		{
+			name: "clusterPushpullInterval",
+			apply: func(am *monitoringv1.Alertmanager) {
+				am.Spec.ClusterPushpullInterval = "0m"
+			},
+		},
+		{
+			name: "clusterPeerTimeout",
+			apply: func(am *monitoringv1.Alertmanager) {
+				am.Spec.ClusterPeerTimeout = "0"
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Don't run Alertmanager tests in parallel. See
+			// https://github.com/prometheus/alertmanager/issues/1835 for details.
+			ctx := context.Background()
+			testCtx := framework.NewTestCtx(t)
+			defer testCtx.Cleanup(t)
+			ns := framework.CreateNamespace(ctx, t, testCtx)
+			framework.SetupPrometheusRBAC(ctx, t, testCtx, ns)
+
+			name := "test"
+			am := framework.MakeBasicAlertmanager(ns, name, 1)
+			tc.apply(am)
+
+			am, err := framework.CreateAlertmanagerAndWaitUntilReady(ctx, am)
+			require.NoError(t, err)
+
+			var reconciled *monitoringv1.Condition
+			for i := range am.Status.Conditions {
+				if am.Status.Conditions[i].Type == monitoringv1.Reconciled {
+					reconciled = &am.Status.Conditions[i]
+					break
+				}
+			}
+
+			require.NotNil(t, reconciled, "expected Reconciled condition in status subresource")
+			require.Equal(t, monitoringv1.ConditionTrue, reconciled.Status)
+			require.Equal(t, operator.IgnoredFieldsReason, reconciled.Reason)
+			require.Contains(t, reconciled.Message, tc.name+" (zero value not supported)")
+
+			sts, err := framework.KubeClient.AppsV1().StatefulSets(ns).Get(ctx, fmt.Sprintf("alertmanager-%s", name), metav1.GetOptions{})
+			require.NoError(t, err)
+
+			switch tc.name {
+			case "retention":
+				require.NotContains(t, sts.Spec.Template.Spec.Containers[0].Args, "--data.retention=0")
+			case "clusterGossipInterval":
+				require.NotContains(t, sts.Spec.Template.Spec.Containers[0].Args, "--cluster.gossip-interval=0s")
+			case "clusterPushpullInterval":
+				require.NotContains(t, sts.Spec.Template.Spec.Containers[0].Args, "--cluster.pushpull-interval=0m")
+			case "clusterPeerTimeout":
+				require.NotContains(t, sts.Spec.Template.Spec.Containers[0].Args, "--cluster.peer-timeout=0")
+			}
+
+			require.NoError(t, framework.DeleteAlertmanagerAndWaitUntilGone(ctx, ns, name))
+		})
+	}
 }
