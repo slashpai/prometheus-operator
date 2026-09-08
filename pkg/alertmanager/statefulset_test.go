@@ -1022,6 +1022,117 @@ func TestRetention(t *testing.T) {
 	}
 }
 
+func TestDiscardZeroDurations(t *testing.T) {
+	replicas := int32(1)
+
+	tests := []struct {
+		name          string
+		spec          monitoringv1.AlertmanagerSpec
+		expectIgnored []string
+	}{
+		{
+			name: "empty retention",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas: &replicas,
+			},
+		},
+		{
+			name: "positive retention",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:  &replicas,
+				Retention: "48h",
+			},
+		},
+		{
+			name: "zero retention",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:  &replicas,
+				Retention: "0",
+			},
+			expectIgnored: []string{"retention (zero value not supported)"},
+		},
+		{
+			name: "zero retention in seconds",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:  &replicas,
+				Retention: "0s",
+			},
+			expectIgnored: []string{"retention (zero value not supported)"},
+		},
+		{
+			name: "zero cluster gossip interval",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:              &replicas,
+				ClusterGossipInterval: "0s",
+			},
+			expectIgnored: []string{"clusterGossipInterval (zero value not supported)"},
+		},
+		{
+			name: "zero cluster pushpull interval",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:                &replicas,
+				ClusterPushpullInterval: "0m",
+			},
+			expectIgnored: []string{"clusterPushpullInterval (zero value not supported)"},
+		},
+		{
+			name: "zero cluster peer timeout",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:           &replicas,
+				ClusterPeerTimeout: "0",
+			},
+			expectIgnored: []string{"clusterPeerTimeout (zero value not supported)"},
+		},
+		{
+			name: "multiple zero durations",
+			spec: monitoringv1.AlertmanagerSpec{
+				Replicas:                &replicas,
+				Retention:               "0",
+				ClusterPushpullInterval: "0s",
+			},
+			expectIgnored: []string{
+				"retention (zero value not supported)",
+				"clusterPushpullInterval (zero value not supported)",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			am := &monitoringv1.Alertmanager{Spec: test.spec}
+
+			ignored := discardZeroDurations(am)
+			require.Equal(t, test.expectIgnored, ignored)
+
+			for _, ignoredField := range test.expectIgnored {
+				switch {
+				case strings.HasPrefix(ignoredField, "retention "):
+					require.Empty(t, am.Spec.Retention)
+				case strings.HasPrefix(ignoredField, "clusterGossipInterval "):
+					require.Empty(t, am.Spec.ClusterGossipInterval)
+				case strings.HasPrefix(ignoredField, "clusterPushpullInterval "):
+					require.Empty(t, am.Spec.ClusterPushpullInterval)
+				case strings.HasPrefix(ignoredField, "clusterPeerTimeout "):
+					require.Empty(t, am.Spec.ClusterPeerTimeout)
+				default:
+					t.Fatalf("unexpected ignored field %q", ignoredField)
+				}
+			}
+		})
+	}
+}
+
+func TestIgnoredFieldsMessage(t *testing.T) {
+	require.Equal(
+		t,
+		"The following fields were ignored: retention (zero value not supported), clusterGossipInterval (zero value not supported)",
+		ignoredFieldsMessage([]string{
+			"retention (zero value not supported)",
+			"clusterGossipInterval (zero value not supported)",
+		}),
+	)
+}
+
 func TestAdditionalConfigMap(t *testing.T) {
 	sset, err := makeStatefulSet(nil, &monitoringv1.Alertmanager{
 		Spec: monitoringv1.AlertmanagerSpec{

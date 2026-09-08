@@ -253,6 +253,7 @@ func testAllNSAlertmanager(t *testing.T) {
 		"AMStatusScale":                           testAlertmanagerStatusScale,
 		"AMServiceName":                           testAlertManagerServiceName,
 		"AMScaleUpWithoutLabels":                  testAMScaleUpWithoutLabels,
+		"AMZeroDuration":                          testAlertmanagerZeroDuration,
 	}
 
 	for name, f := range testFuncs {
